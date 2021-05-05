@@ -11,21 +11,49 @@
 #include <sstream>
 #include <iostream>
 #include <functional>
+#include <vector>
 
 namespace calf {
 namespace platform {
 namespace windows {
 
-using io_handler = std::function<void(void)>;
+struct overlapped_io_context;
+
+using io_handler = std::function<void(overlapped_io_context&)>;
+using io_buffer = std::vector<std::uint8_t>;
+
+enum struct io_type {
+  unknown,
+  write, 
+  read,
+  broken
+};
+
+enum struct io_mode {
+  open,
+  create
+};
 
 struct overlapped_io_context {
-  overlapped_io_context() {
+  overlapped_io_context() 
+    : bytes_transferred(0),
+      is_pending(false),
+      type(io_type::unknown) {
     // 重叠结构使用前必须主动置零。
     memset(&overlapped, 0, sizeof(overlapped));
   }
 
+  // 必须保证 OVERLAPPED 结构体在内存最前。
   OVERLAPPED overlapped;
+  std::size_t bytes_transferred;
   io_handler handler;
+  bool is_pending;
+  io_type type;
+};
+
+struct io_context
+  : public overlapped_io_context {
+  io_buffer buffer;
 };
 
 class io_completion_port
@@ -34,22 +62,23 @@ public:
   io_completion_port() { create(); }
 
   void associate(HANDLE file, ULONG_PTR key) {
-    win32_assert(is_valid());
+    CALF_ASSERT(is_valid());
 
     HANDLE port = ::CreateIoCompletionPort(
         file, 
         handle_, 
         key,
         0);
-    win32_assert(port == handle_);
+    CALF_WIN32_CHECK(port == handle_, CreateIoCompletionPort);
   }
 
-  void wait(
+  bool wait(
       LPOVERLAPPED* overlapped,
       PULONG_PTR key,
       LPDWORD bytes_transferred,
+      DWORD* err,
       DWORD timeout = INFINITE) {
-    win32_assert(is_valid());
+    CALF_ASSERT(is_valid());
 
     BOOL bret = ::GetQueuedCompletionStatus(
         handle_,
@@ -58,14 +87,18 @@ public:
         overlapped,
         timeout);
 
-    win32_assert(bret != FALSE);
+    //CALF_WIN32_CHECK(bret != FALSE, GetQueuedCompletionStatus);
+    if (bret == FALSE) {
+      *err = ::GetLastError();
+    }
+    return bret != FALSE;
   }
 
   void notify(
       DWORD bytes_transferred,
       ULONG_PTR key, 
       LPOVERLAPPED overlapped) {
-    win32_assert(is_valid());
+    CALF_ASSERT(is_valid());
 
     BOOL bret = ::PostQueuedCompletionStatus(
         handle_, 
@@ -73,19 +106,20 @@ public:
         key, 
         overlapped);
 
-    win32_assert(bret != FALSE);
+    CALF_WIN32_CHECK(bret != FALSE, PostQueuedCompletionStatus);
   }
 
 protected:
   void create() {
     handle_ = ::CreateIoCompletionPort(INVALID_HANDLE_VALUE, NULL, 0, 0);
-    win32_assert(is_valid()) << "Create IoCompletionPort Failed.";
+    CALF_WIN32_ASSERT(is_valid(), CreateIoCompletionPort);
   }
 };
 
 class io_completion_handler {
 public:
-  virtual void io_completed(overlapped_io_context* context) = 0;
+  virtual void io_completed(overlapped_io_context* context) {};
+  virtual void io_broken(overlapped_io_context* context, DWORD err) {};
   virtual ~io_completion_handler() {}
 };
 
@@ -98,11 +132,19 @@ public:
     ULONG_PTR key = NULL;
     LPOVERLAPPED overlapped = NULL;
     while (!quit_flag_.load(std::memory_order_relaxed)) {
-      iocp_.wait(&overlapped, &key, &bytes_transferred);
+      DWORD err = ERROR_SUCCESS;
+      bool completed = iocp_.wait(&overlapped, &key, &bytes_transferred, &err);
       io_completion_handler* handler = reinterpret_cast<io_completion_handler*>(key);
       overlapped_io_context* context = reinterpret_cast<overlapped_io_context*>(overlapped);
+      if (context != nullptr) {
+        context->bytes_transferred = bytes_transferred;
+      }
       if (handler != nullptr) {
-        handler->io_completed(context);
+        if (completed) {
+          handler->io_completed(context);
+        } else {
+          handler->io_broken(context, err);
+        }
       }
     }
   }
@@ -112,6 +154,11 @@ public:
         0,
         reinterpret_cast<ULONG_PTR>(handler), 
         reinterpret_cast<OVERLAPPED*>(context));
+  }
+
+  void quit() {
+    quit_flag_.store(true, std::memory_order_relaxed);
+    iocp_.close();
   }
 
 protected:
@@ -125,6 +172,8 @@ protected:
   std::atomic_bool quit_flag_;
 
 friend class named_pipe;
+friend class named_pipe_server;
+friend class named_pipe_client;
 };
 
 class file
@@ -135,15 +184,92 @@ protected:
   static const int default_timeout = 5 * 1000;
 
 public:
-  // Override io_completion_handler
-  virtual void io_completed(overlapped_io_context* context) {}
+  void read(
+      io_context& context, 
+      const io_handler& handler) {
+    context.handler = handler;
+    read(context);
+  }
+
+  void read(
+      io_context& context) {
+    CALF_ASSERT(is_valid());
+    
+    context.type = io_type::read;
+
+    context.buffer.resize(default_buffer_size);
+    DWORD bytes_read = 0;
+    BOOL bret = ::ReadFile(
+        handle_, 
+        reinterpret_cast<VOID*>(context.buffer.data()),
+        default_buffer_size,
+        &bytes_read,
+        &context.overlapped);
+
+    if (bret != FALSE) {
+      // 读取成功也由 IOCP 通知。
+    } else {
+      DWORD err = ::GetLastError();
+      CALF_WIN32_CHECK(err == ERROR_IO_PENDING, ReadFile);
+    }
+  }
+
+  void write(
+      io_context& context, 
+      std::uint8_t* data, 
+      std::size_t bytes_to_write) {
+    CALF_ASSERT(is_valid());
+
+    context.type = io_type::write;
+
+    DWORD bytes_written = 0;
+    BOOL bret = ::WriteFile(
+        handle_, 
+        reinterpret_cast<LPCVOID>(data),
+        static_cast<DWORD>(bytes_to_write),
+        &bytes_written,
+        &context.overlapped);
+    
+    if (bret == FALSE) {
+      DWORD err = ::GetLastError();
+      CALF_WIN32_CHECK(err == ERROR_IO_PENDING, WriteFile);
+    }
+  }
 
 public:
-  void read(
-      overlapped_io_context& context, 
-      const io_handler& handler) {
-    win32_assert(is_valid());
+  // Override io_completion_handler method.
+  virtual void io_completed(overlapped_io_context* context) override {
+    io_context* ioc = static_cast<io_context*>(context);
+    if (ioc != nullptr) {
+      switch (ioc->type) {
+      case io_type::read: 
+        ioc->buffer.resize(ioc->bytes_transferred);
+        break;
+      case io_type::write:
+        break;
+      case io_type::broken:
+        break;
+      default:
+        break;
+      }
 
+      if (ioc->handler) {
+        ioc->handler(*ioc);
+      }
+    }
+  }
+
+  virtual void io_broken(overlapped_io_context* context, DWORD err) override {
+    // 出错误了。
+    BOOL bret = ::CancelIo(handle_);
+    CALF_CHECK(bret != FALSE);
+    io_context* ioc = static_cast<io_context*>(context);
+    if (ioc != nullptr) {
+      ioc->type = io_type::broken;
+      if (ioc->handler) {
+        ioc->handler(*ioc);
+      }
+    }
   }
 };
 
@@ -160,8 +286,8 @@ public:
   }
 
   template<typename ...Args>
-  decltype(auto) package_dispatch(Args&&... args) {
-    auto result = worker_.package_dispatch(std::forward<Args>(args)...);
+  decltype(auto) packaged_dispatch(Args&&... args) {
+    auto result = worker_.packaged_dispatch(std::forward<Args>(args)...);
     service_.dispatch(this, nullptr);
     return result;
   }

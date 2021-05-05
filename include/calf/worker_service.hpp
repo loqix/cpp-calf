@@ -1,5 +1,5 @@
-#ifndef CALF_MULTI_THREAD_HPP
-#define CALF_MULTI_THREAD_HPP
+#ifndef CALF_WORKER_SERVICE_HPP
+#define CALF_WORKER_SERVICE_HPP
 
 #include <atomic>
 #include <functional>
@@ -41,7 +41,7 @@ public:
   template<typename Fn, 
       typename ...Args,
       typename Ret = typename std::result_of<Fn>::type>
-  std::future<Ret> package_dispatch(Fn&& fn, Args&&... args) {
+  std::future<Ret> packaged_dispatch(Fn&& fn, Args&&... args) {
     std::unique_lock<std::mutex> lock(mutex_);
     std::packaged_task<Ret(Args...)> pkg_task(std::forward<Fn>(fn));
     auto task_future = pkg_task.get_future();
@@ -80,4 +80,4 @@ private:
 
 } // namespace calf
 
-#endif // CALF_MULTI_THREAD_HPP
+#endif // CALF_WORKER_SERVICE_HPP
