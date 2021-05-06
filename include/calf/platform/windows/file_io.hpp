@@ -24,8 +24,10 @@ using io_buffer = std::vector<std::uint8_t>;
 
 enum struct io_type {
   unknown,
+  create,
   write, 
   read,
+  close,
   broken
 };
 
@@ -54,6 +56,7 @@ struct overlapped_io_context {
 struct io_context
   : public overlapped_io_context {
   io_buffer buffer;
+  std::size_t offset;
 };
 
 class io_completion_port
@@ -172,29 +175,23 @@ protected:
   std::atomic_bool quit_flag_;
 
 friend class named_pipe;
-friend class named_pipe_server;
-friend class named_pipe_client;
 };
 
 class file
   : public kernel_object,
-    public io_completion_handler {
-protected:
-  static const int default_buffer_size = 4 * 1024;
+    protected io_completion_handler {
+public:
+  static const std::size_t default_buffer_size = 4 * 1024;
+  static const std::size_t max_buffer_size = 128 * 1024 * 1024;
   static const int default_timeout = 5 * 1000;
 
 public:
   void read(
-      io_context& context, 
+      io_context& context,
       const io_handler& handler) {
-    context.handler = handler;
-    read(context);
-  }
-
-  void read(
-      io_context& context) {
     CALF_ASSERT(is_valid());
     
+    context.handler = handler;
     context.type = io_type::read;
 
     context.buffer.resize(default_buffer_size);
@@ -211,28 +208,34 @@ public:
     } else {
       DWORD err = ::GetLastError();
       CALF_WIN32_CHECK(err == ERROR_IO_PENDING, ReadFile);
+      if (err = ERROR_IO_PENDING) {
+        context.is_pending = true;
+      }
     }
   }
 
   void write(
-      io_context& context, 
-      std::uint8_t* data, 
-      std::size_t bytes_to_write) {
+      io_context& context,
+      io_handler handler) {
     CALF_ASSERT(is_valid());
 
+    context.handler = handler;
     context.type = io_type::write;
 
     DWORD bytes_written = 0;
     BOOL bret = ::WriteFile(
         handle_, 
-        reinterpret_cast<LPCVOID>(data),
-        static_cast<DWORD>(bytes_to_write),
+        reinterpret_cast<LPCVOID>(context.buffer.data()),
+        static_cast<DWORD>(context.buffer.size()),
         &bytes_written,
         &context.overlapped);
     
     if (bret == FALSE) {
       DWORD err = ::GetLastError();
       CALF_WIN32_CHECK(err == ERROR_IO_PENDING, WriteFile);
+      if (err == ERROR_IO_PENDING) {
+        context.is_pending = true;
+      }
     }
   }
 
@@ -244,8 +247,10 @@ public:
       switch (ioc->type) {
       case io_type::read: 
         ioc->buffer.resize(ioc->bytes_transferred);
+        ioc->is_pending = false;
         break;
       case io_type::write:
+        ioc->is_pending = false;
         break;
       case io_type::broken:
         break;
@@ -274,7 +279,7 @@ public:
 };
 
 class io_completion_worker
-  : public io_completion_handler {
+  : protected io_completion_handler {
 public:
   io_completion_worker(io_completion_service& service)
     : service_(service) {}

@@ -42,15 +42,16 @@ public:
       // 通过 CreateFile 打开的管道不能调用 ConnectNamePipe。
       io_context.handler(io_context);
     } else {
+      io_context.type = io_type::create;
       BOOL bret = ::ConnectNamedPipe(handle_, &io_context.overlapped);
       CALF_WIN32_CHECK(bret == FALSE, ConnectNamedPipe); // 异步总是返回 FALSE。
       if (bret == FALSE) {
         DWORD err = ::GetLastError();
         if (err == ERROR_IO_PENDING) {
+          io_context.is_pending = true;
         } else if (err == ERROR_PIPE_CONNECTED) {
           connected_flag_.store(true, std::memory_order_relaxed);
           // 连接已经完成了，这里在当前线程直接调用回调。
-          // TODO: 考虑也移入 IO 线程调用。
           io_context.handler(io_context);
         }
       }
@@ -58,10 +59,18 @@ public:
   }
 
   // Override io_completion_handler methods.
+  virtual void io_completed(overlapped_io_context* context) override {
+    if (context != nullptr && context->type == io_type::create) {
+      context->is_pending = false;
+    }
+    file::io_completed(context);
+  }
+
   virtual void io_broken(overlapped_io_context* context, DWORD err) override {
-    file::io_broken(context, err);
     // 管道错误，关闭管道
     CALF_WIN32_CHECK(err == ERROR_BROKEN_PIPE, GetQueuedCompletionStatus);
+
+    file::io_broken(context, err);
   }
 
 protected:
@@ -124,26 +133,103 @@ public:
     message_.resize(sizeof(pipe_message_head) + size);
     pipe_message_head* head = reinterpret_cast<pipe_message_head*>(message_.data());
     head->id = static_cast<std::uint32_t>(id);
-    head->size = static_cast<std::uint32_t>(message_.size());
+    head->size = static_cast<std::uint32_t>(size);
   }
 
   std::uint8_t* data() { return message_.data() + sizeof(pipe_message_head); }
+  std::size_t size() { 
+    pipe_message_head* head = reinterpret_cast<pipe_message_head*>(message_.data());
+    return static_cast<std::size_t>(head->size);
+  }
+  io_buffer& buffer() { return message_; }
 
 private:
-  std::vector<std::uint8_t> message_;
+  io_buffer message_;
 };
 
 class pipe_message_service {
 public:
-  void send(pipe_message* message) {
+  using message_received_handler = std::function<void(pipe_message*)>;
 
+public:
+  pipe_message_service(
+      const std::wstring& pipe_name, 
+      io_mode mode, 
+      message_received_handler& handler) 
+    : handler_(handler),
+      io_worker_(io_service_),
+      pipe_(pipe_name, mode, io_service_) {}
+
+  void run() {
+    io_worker_.dispatch(
+        &named_pipe::connect, 
+        &pipe_, 
+        std::ref(read_context_), 
+        std::bind(&pipe_message_service::receive, this));
+
+    io_service_.run_loop();
+  }
+
+  void send_message(std::unique_ptr<pipe_message> message) {
+    std::unique_lock<std::mutex> lock(send_mutex_);
+    send_queue_.emplace_back(std::move(message));
+    lock.unlock();
+    io_worker_.dispatch(&pipe_message_service::send, this);
   }
 
 private:
-  std::deque<pipe_message*> send_queue_;
-  std::deque<pipe_message*> receive_queue_;
+  void receive() {
+    if (read_context_.is_pending) {
+      return;
+    }
+
+    pipe_.read(
+        read_context_, 
+        std::bind(&pipe_message_service::receive_completed, this));
+  }
+
+  void receive_completed() {
+    std::size_t buffer_size = read_context_.buffer.size();
+    if (buffer_size >= sizeof(pipe_message_head)) {
+      pipe_message_head* head = reinterpret_cast<pipe_message_head*>(read_context_.buffer.data());
+    }
+
+    receive();
+  }
+  
+  void send() {
+    if (write_context_.is_pending) {
+      return;
+    }
+
+    std::unique_lock<std::mutex> lock(send_mutex_);
+    if (!send_queue_.empty()) {
+      std::unique_ptr<pipe_message> message = std::move(send_queue_.front());
+      send_queue_.pop_front();
+      lock.unlock();
+
+      write_context_.buffer = std::move(message->buffer());
+      pipe_.write( 
+          write_context_, 
+          std::bind(&pipe_message_service::send_completed, this));
+    }
+  }
+
+  void send_completed() {
+    send();
+  }
+
+private:
+  calf::io_completion_service io_service_;
+  calf::io_completion_worker io_worker_;
+  calf::named_pipe pipe_;
+  std::deque<std::unique_ptr<pipe_message>> send_queue_;
+  std::mutex send_mutex_;
+  std::deque<std::unique_ptr<pipe_message>> receive_queue_;
+  std::mutex receive_mutex_;
   io_context read_context_;
   io_context write_context_;
+  message_received_handler handler_;
 };
 
 } // namespace windows
