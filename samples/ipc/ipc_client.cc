@@ -7,56 +7,20 @@
 #include <sstream>
 #include <iostream>
 
-class IpcClient {
-public:
-  IpcClient()
-    : io_worker_(io_service_),
-      pipe_(L"\\\\.\\pipe\\ipc_sample", calf::io_mode::open, io_service_) {}
+int main(int argc, char* argv[]) {
+  std::wstring pipe_name(L"\\\\.\\pipe\\ipc_sample");
+  calf::pipe_message_service::message_received_handler handler = [](std::unique_ptr<calf::pipe_message>& message) {
+    std::cout << "id=" << message->head()->id << " size=" << message->head()->size << std::endl;
+  };
+  calf::pipe_message_service service(pipe_name, calf::io_mode::open, handler);
 
-  void Run() {
-    std::cout << "thread(" << ::GetCurrentThreadId() << ") " <<
-        "ipc client: start." << std::endl;
-
-    std::thread io_thread(&calf::io_completion_service::run_loop, &io_service_);
-    
-    calf::io_buffer buf;
-    io_worker_.dispatch(&calf::named_pipe::connect, &pipe_, std::ref(io_context_), [this, &buf](calf::overlapped_io_context&) {
-      std::cout << "thread(" << ::GetCurrentThreadId() << ") " <<
-          "ipc client: pipe connected" << std::endl;
-      
-      pipe_.write(write_context_, reinterpret_cast<uint8_t*>("asdf"), 4);
-      pipe_.read(read_context_, [this](calf::overlapped_io_context& context) {
-        if (context.type == calf::io_type::broken) {
-          std::cout << "thread(" << ::GetCurrentThreadId() << ") " <<
-              "ipc client: pipe close" << std::endl;
-          io_service_.quit();
-          context.handler = nullptr;
-          return;
-        }
-        std::string data(reinterpret_cast<char*>(read_context_.buffer.data()), read_context_.buffer.size());
-        std::cout << "thread(" << ::GetCurrentThreadId() << ") " <<
-            "ipc client: pipe read \"" << data << "\" length=" << read_context_.bytes_transferred << std::endl;
-        pipe_.read(read_context_);
-      });
-    });
-
-
-    io_thread.join();
-    std::cout << "thread(" << ::GetCurrentThreadId() << ") " <<
-        "ipc client end." << std::endl;
+  for (int i=0; i< 10; ++i) {
+    auto message = std::make_unique<calf::pipe_message>(1 + i, 10);
+    memset(message->data(), 'a' + i, 10);
+    service.send_message(std::move(message));
   }
 
-private:
-  calf::io_completion_service io_service_;
-  calf::io_completion_worker io_worker_;
-  calf::named_pipe pipe_;
-  calf::overlapped_io_context io_context_;
-  calf::io_context read_context_;
-  calf::io_context write_context_;
-};
-
-int main(int argc, char* argv[]) {
-  IpcClient client;
-  client.Run(); 
+  std::thread thread(&calf::pipe_message_service::run, &service);
+  thread.join();
   return 0;    
 }

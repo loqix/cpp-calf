@@ -189,16 +189,21 @@ public:
   void read(
       io_context& context,
       const io_handler& handler) {
+    context.handler = handler;
+    read(context);
+  }
+
+  void read(io_context& context) {
     CALF_ASSERT(is_valid());
     
-    context.handler = handler;
     context.type = io_type::read;
 
-    context.buffer.resize(default_buffer_size);
+    context.offset = context.buffer.size();
+    context.buffer.resize(context.offset + default_buffer_size);
     DWORD bytes_read = 0;
     BOOL bret = ::ReadFile(
         handle_, 
-        reinterpret_cast<VOID*>(context.buffer.data()),
+        reinterpret_cast<VOID*>(context.buffer.data() + context.offset),
         default_buffer_size,
         &bytes_read,
         &context.overlapped);
@@ -217,9 +222,22 @@ public:
   void write(
       io_context& context,
       io_handler handler) {
+    context.handler = handler;
+    write(context);
+  }
+
+  void write(
+      io_context& context, 
+      std::uint8_t* data, 
+      std::size_t size) {
+    context.buffer.resize(size);
+    memcpy(context.buffer.data(), data, size);
+    write(context);
+  }
+
+  void write(io_context& context) {
     CALF_ASSERT(is_valid());
 
-    context.handler = handler;
     context.type = io_type::write;
 
     DWORD bytes_written = 0;
@@ -246,13 +264,17 @@ public:
     if (ioc != nullptr) {
       switch (ioc->type) {
       case io_type::read: 
-        ioc->buffer.resize(ioc->bytes_transferred);
+        ioc->buffer.resize(ioc->offset + ioc->bytes_transferred);
+        ioc->offset = ioc->buffer.size();
         ioc->is_pending = false;
         break;
       case io_type::write:
         ioc->is_pending = false;
         break;
       case io_type::broken:
+        ioc->is_pending = false;
+        ioc->buffer.clear();
+        ioc->offset = 0;
         break;
       default:
         break;
@@ -271,6 +293,8 @@ public:
     io_context* ioc = static_cast<io_context*>(context);
     if (ioc != nullptr) {
       ioc->type = io_type::broken;
+      ioc->buffer.clear();
+      ioc->offset = 0;
       if (ioc->handler) {
         ioc->handler(*ioc);
       }

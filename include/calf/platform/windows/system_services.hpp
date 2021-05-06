@@ -20,16 +20,19 @@ class named_pipe
 public:
   named_pipe(const std::wstring& pipe_name, io_mode mode)
     : connected_flag_(false) {
-      switch (mode) {
-      case io_mode::create:
-        create(pipe_name);
-        break;
-      case io_mode::open:
-        open(pipe_name);
-        break;
-      }
+    switch (mode) {
+    case io_mode::create:
+      create(pipe_name);
+      break;
+    case io_mode::open:
+      open(pipe_name);
+      break;
     }
-  named_pipe(const std::wstring& pipe_name, io_mode mode, io_completion_service& io_service)
+  }
+  named_pipe(
+      const std::wstring& pipe_name, 
+      io_mode mode, 
+      io_completion_service& io_service)
     : named_pipe(pipe_name, mode) {
     io_service.register_handle(handle_, this);
   }
@@ -47,6 +50,7 @@ public:
       CALF_WIN32_CHECK(bret == FALSE, ConnectNamedPipe); // 异步总是返回 FALSE。
       if (bret == FALSE) {
         DWORD err = ::GetLastError();
+        CALF_WIN32_CHECK(err == ERROR_IO_PENDING || err == ERROR_PIPE_CONNECTED, ConnectNamedPipe);
         if (err == ERROR_IO_PENDING) {
           io_context.is_pending = true;
         } else if (err == ERROR_PIPE_CONNECTED) {
@@ -58,10 +62,13 @@ public:
     }
   }
 
+  bool is_connected() { return connected_flag_.load(std::memory_order_relaxed); }
+
   // Override io_completion_handler methods.
   virtual void io_completed(overlapped_io_context* context) override {
     if (context != nullptr && context->type == io_type::create) {
       context->is_pending = false;
+      connected_flag_.store(true, std::memory_order_relaxed);
     }
     file::io_completed(context);
   }
@@ -80,7 +87,7 @@ protected:
         PIPE_ACCESS_DUPLEX | FILE_FLAG_OVERLAPPED |
         FILE_FLAG_FIRST_PIPE_INSTANCE,
         PIPE_TYPE_BYTE | PIPE_READMODE_BYTE |
-        PIPE_NOWAIT, 
+        PIPE_WAIT,  // 确定使用重叠 IO，这里需要阻塞模式，
         PIPE_UNLIMITED_INSTANCES, // 允许创建多重管道实例
         default_buffer_size,
         default_buffer_size,
@@ -104,6 +111,7 @@ protected:
       DWORD err = ::GetLastError();
       if (err == ERROR_PIPE_BUSY) {
         BOOL bret = ::WaitNamedPipeW(pipe_name.c_str(), default_timeout);
+        CALF_WIN32_CHECK(bret != FALSE, WaitNamedPipeW);
         if (bret != FALSE) {
           open(pipe_name, false);
           return;
@@ -136,11 +144,13 @@ public:
     head->size = static_cast<std::uint32_t>(size);
   }
 
-  std::uint8_t* data() { return message_.data() + sizeof(pipe_message_head); }
-  std::size_t size() { 
-    pipe_message_head* head = reinterpret_cast<pipe_message_head*>(message_.data());
-    return static_cast<std::size_t>(head->size);
+  pipe_message(std::uint8_t* data, std::size_t size) {
+    message_.resize(size);
+    memcpy(message_.data(), data, size);
   }
+
+  pipe_message_head* head() { return reinterpret_cast<pipe_message_head*>(message_.data()); }
+  std::uint8_t* data() { return message_.data() + sizeof(pipe_message_head); }
   io_buffer& buffer() { return message_; }
 
 private:
@@ -149,7 +159,8 @@ private:
 
 class pipe_message_service {
 public:
-  using message_received_handler = std::function<void(pipe_message*)>;
+  using message_received_handler = 
+      std::function<void(std::unique_ptr<pipe_message>&)>;
 
 public:
   pipe_message_service(
@@ -161,12 +172,7 @@ public:
       pipe_(pipe_name, mode, io_service_) {}
 
   void run() {
-    io_worker_.dispatch(
-        &named_pipe::connect, 
-        &pipe_, 
-        std::ref(read_context_), 
-        std::bind(&pipe_message_service::receive, this));
-
+    io_worker_.dispatch(&pipe_message_service::connect, this);
     io_service_.run_loop();
   }
 
@@ -178,8 +184,17 @@ public:
   }
 
 private:
+  void connect() {
+    pipe_.connect(std::ref(read_context_), std::bind(&pipe_message_service::connect_completed, this));
+  }
+
+  void connect_completed() {
+    send();
+    receive();
+  }
+  
   void receive() {
-    if (read_context_.is_pending) {
+    if (read_context_.is_pending || !pipe_.is_connected()) {
       return;
     }
 
@@ -189,16 +204,73 @@ private:
   }
 
   void receive_completed() {
-    std::size_t buffer_size = read_context_.buffer.size();
-    if (buffer_size >= sizeof(pipe_message_head)) {
-      pipe_message_head* head = reinterpret_cast<pipe_message_head*>(read_context_.buffer.data());
+    if (read_context_.type != io_type::read) {
+      closed();
+      return;
     }
 
+    std::unique_lock<std::mutex> lock(receive_mutex_, std::defer_lock);
+    
+    std::size_t offset = 0;
+    std::size_t buffer_size = read_context_.buffer.size();
+    while (buffer_size >= sizeof(pipe_message_head)) {
+      pipe_message_head* head = 
+          reinterpret_cast<pipe_message_head*>(read_context_.buffer.data() + offset);
+      std::size_t message_size = sizeof(pipe_message_head) + head->size;
+      if (buffer_size >= message_size) {
+        // 消息已经接收完整。
+        auto message = std::make_unique<pipe_message>(
+            read_context_.buffer.data() + offset, 
+            message_size);
+
+        lock.lock();
+        receive_queue_.emplace_back(std::move(message));
+        lock.unlock();
+
+        offset += message_size;
+        buffer_size -= message_size;
+      } else {
+        // 消息不完整。
+        break;
+      }
+    } 
+    
+    // 处理多余的数据
+    if (offset != 0) {
+      if (buffer_size > 0) {
+        io_buffer new_buffer;
+        new_buffer.resize(buffer_size);
+        memcpy(new_buffer.data(), read_context_.buffer.data() + offset, buffer_size);
+        read_context_.buffer = std::move(new_buffer);
+        read_context_.offset = buffer_size;
+
+        offset += buffer_size;
+        buffer_size -= buffer_size;
+      } else {
+        // 正好完全接收
+        read_context_.buffer.clear();
+        read_context_.offset = 0;
+      }
+    }
+
+    // 调用回调
+    if (handler_) {
+      lock.lock();
+      while (!receive_queue_.empty()) {
+        auto message = std::move(receive_queue_.front());
+        receive_queue_.pop_front();
+        lock.unlock();
+        handler_(message);
+        lock.lock();
+      }
+    }
+
+    // 接收新消息
     receive();
   }
   
   void send() {
-    if (write_context_.is_pending) {
+    if (write_context_.is_pending || !pipe_.is_connected()) {
       return;
     }
 
@@ -216,7 +288,16 @@ private:
   }
 
   void send_completed() {
+    if (write_context_.type != io_type::write) {
+      closed();
+      return;
+    }
+
     send();
+  }
+
+  void closed() {
+    io_service_.quit();
   }
 
 private:
