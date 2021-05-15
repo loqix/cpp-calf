@@ -1,7 +1,4 @@
-#include <calf/platform/windows/win32.hpp>
-#include <calf/platform/windows/file_io.hpp>
 #include <calf/platform/windows/system_services.hpp>
-#include <calf/worker_service.hpp>
 
 #include <functional>
 #include <sstream>

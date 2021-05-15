@@ -46,7 +46,7 @@ struct overlapped_io_context {
     memset(&overlapped, 0, sizeof(overlapped));
   }
 
-  // 必须保证 OVERLAPPED 结构体在内存最前。
+  // 特殊尾随数据，必须保证 OVERLAPPED 结构体在内存最前。
   OVERLAPPED overlapped;
   std::size_t bytes_transferred;
   io_handler handler;

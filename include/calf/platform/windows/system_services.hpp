@@ -382,16 +382,16 @@ private:
   void message_handler(
       pipe_message_channel::message_handler handler,
       pipe_message_channel& channel) {
+    if (handler) {
+      handler(channel);
+    }
 
-    // Close channel whether channel had broken or close.
     if (channel.type() == io_type::broken ||
         channel.type() == io_type::close) {
+      // 管道关闭了。
       io_worker_.dispatch(&pipe_message_service::close_channel, this, std::ref(channel));
-    } else if (channel.type() == io_type::read) {
-      if (handler) {
-        handler(channel);
-      }
-    } else if (channel.type() == io_type::create) {
+    } else if (channel.type() == io_type::create && mode_ == io_mode::create) {
+      // 服务端建立连接后，准备一个新的连接。
       create_channel(handler, false);
     }
   }
