@@ -9,6 +9,7 @@
 #include <cstdint>
 #include <string>
 #include <queue>
+#include <list>
 
 namespace calf {
 namespace platform {
@@ -23,6 +24,9 @@ public:
     switch (mode) {
     case io_mode::create:
       create(pipe_name);
+      break;
+    case io_mode::create_multiple_instance:
+      create(pipe_name, false);
       break;
     case io_mode::open:
       open(pipe_name);
@@ -39,13 +43,13 @@ public:
 
   void connect(overlapped_io_context& io_context, const io_handler& handler) {
     io_context.handler = handler;
+    io_context.type = io_type::create;
 
     if (connected_flag_.load(std::memory_order_relaxed)) {
       // 连接已完成
       // 通过 CreateFile 打开的管道不能调用 ConnectNamePipe。
       io_context.handler(io_context);
     } else {
-      io_context.type = io_type::create;
       BOOL bret = ::ConnectNamedPipe(handle_, &io_context.overlapped);
       CALF_WIN32_CHECK(bret == FALSE, ConnectNamedPipe); // 异步总是返回 FALSE。
       if (bret == FALSE) {
@@ -81,11 +85,11 @@ public:
   }
 
 protected:
-  void create(const std::wstring& pipe_name) {
+  void create(const std::wstring& pipe_name, bool first_instance = true) {
     handle_ = ::CreateNamedPipeW(
         pipe_name.c_str(), 
         PIPE_ACCESS_DUPLEX | FILE_FLAG_OVERLAPPED |
-        FILE_FLAG_FIRST_PIPE_INSTANCE,
+        (first_instance ? FILE_FLAG_FIRST_PIPE_INSTANCE : NULL),
         PIPE_TYPE_BYTE | PIPE_READMODE_BYTE |
         PIPE_WAIT,  // 确定使用重叠 IO，这里需要阻塞模式，
         PIPE_UNLIMITED_INSTANCES, // 允许创建多重管道实例
@@ -137,6 +141,11 @@ struct pipe_message_head {
 
 class pipe_message {
 public:
+  pipe_message(const std::uint8_t* mem_data, std::size_t size) {
+    message_.resize(size);
+    memcpy(message_.data(), mem_data, size);
+  }
+
   pipe_message(int id, std::size_t size) {
     message_.resize(sizeof(pipe_message_head) + size);
     pipe_message_head* head = reinterpret_cast<pipe_message_head*>(message_.data());
@@ -144,10 +153,16 @@ public:
     head->size = static_cast<std::uint32_t>(size);
   }
 
-  pipe_message(std::uint8_t* data, std::size_t size) {
-    message_.resize(size);
-    memcpy(message_.data(), data, size);
+  pipe_message(int id, const std::uint8_t* mem_data, std::size_t size) 
+    : pipe_message(id, size) {
+    memcpy(data(), mem_data, size);
   }
+
+  pipe_message(int id, std::string& str_data) 
+    : pipe_message(
+          id, 
+          reinterpret_cast<const std::uint8_t*>(str_data.c_str()), 
+          str_data.length()) {}
 
   pipe_message_head* head() { return reinterpret_cast<pipe_message_head*>(message_.data()); }
   std::uint8_t* data() { return message_.data() + sizeof(pipe_message_head); }
@@ -157,38 +172,52 @@ private:
   io_buffer message_;
 };
 
-class pipe_message_service {
+class pipe_message_channel {
 public:
-  using message_received_handler = 
-      std::function<void(std::unique_ptr<pipe_message>&)>;
+  using message_handler = 
+      std::function<void(
+          pipe_message_channel& channel)>;
 
 public:
-  pipe_message_service(
+  pipe_message_channel(
       const std::wstring& pipe_name, 
       io_mode mode, 
-      message_received_handler& handler) 
-    : handler_(handler),
-      io_worker_(io_service_),
-      pipe_(pipe_name, mode, io_service_) {}
-
-  void run() {
-    io_worker_.dispatch(&pipe_message_service::connect, this);
-    io_service_.run_loop();
-  }
-
+      io_completion_service& io_service,
+      io_completion_worker& io_worker,
+      message_handler handler) 
+    : io_worker_(io_worker),
+      pipe_(pipe_name, mode, io_service),
+      handler_(handler) {}
+  pipe_message_channel(const pipe_message_channel&) = delete;
+    
   void send_message(std::unique_ptr<pipe_message> message) {
     std::unique_lock<std::mutex> lock(send_mutex_);
     send_queue_.emplace_back(std::move(message));
     lock.unlock();
-    io_worker_.dispatch(&pipe_message_service::send, this);
+    io_worker_.dispatch(&pipe_message_channel::send, this);
   }
+
+  std::unique_ptr<pipe_message> receive_message() {
+    std::unique_lock<std::mutex> lock(receive_mutex_);
+    if (!receive_queue_.empty()) {
+      auto message = std::move(receive_queue_.front());
+      receive_queue_.pop_front();
+      return std::move(message);
+    }
+    return std::unique_ptr<pipe_message>();
+  }
+
+  io_type type() const { return read_context_.type; }
 
 private:
   void connect() {
-    pipe_.connect(std::ref(read_context_), std::bind(&pipe_message_service::connect_completed, this));
+    pipe_.connect(std::ref(read_context_), std::bind(&pipe_message_channel::connect_completed, this));
   }
 
   void connect_completed() {
+    if (handler_) {
+      handler_(*this);
+    }
     send();
     receive();
   }
@@ -200,7 +229,7 @@ private:
 
     pipe_.read(
         read_context_, 
-        std::bind(&pipe_message_service::receive_completed, this));
+        std::bind(&pipe_message_channel::receive_completed, this));
   }
 
   void receive_completed() {
@@ -255,14 +284,7 @@ private:
 
     // 调用回调
     if (handler_) {
-      lock.lock();
-      while (!receive_queue_.empty()) {
-        auto message = std::move(receive_queue_.front());
-        receive_queue_.pop_front();
-        lock.unlock();
-        handler_(message);
-        lock.lock();
-      }
+      handler_(*this);
     }
 
     // 接收新消息
@@ -283,7 +305,7 @@ private:
       write_context_.buffer = std::move(message->buffer());
       pipe_.write( 
           write_context_, 
-          std::bind(&pipe_message_service::send_completed, this));
+          std::bind(&pipe_message_channel::send_completed, this));
     }
   }
 
@@ -297,20 +319,89 @@ private:
   }
 
   void closed() {
-    io_service_.quit();
+    if (handler_) {
+      handler_(*this);
+    }
   }
 
 private:
-  calf::io_completion_service io_service_;
-  calf::io_completion_worker io_worker_;
-  calf::named_pipe pipe_;
+  io_completion_worker& io_worker_;
+
+  named_pipe pipe_;
   std::deque<std::unique_ptr<pipe_message>> send_queue_;
   std::mutex send_mutex_;
   std::deque<std::unique_ptr<pipe_message>> receive_queue_;
   std::mutex receive_mutex_;
   io_context read_context_;
   io_context write_context_;
-  message_received_handler handler_;
+  
+  // callback handler;
+  message_handler handler_;
+
+friend class pipe_message_service;
+};
+
+class pipe_message_service {
+public:
+  pipe_message_service(
+      const std::wstring& pipe_name, 
+      io_mode mode) 
+    : pipe_name_(pipe_name),
+      mode_(mode),
+      io_worker_(io_service_) {}
+  pipe_message_service(const pipe_message_service&) = delete;
+
+  void run() {
+    io_service_.run_loop();
+  }
+
+  pipe_message_channel& create_channel(
+      pipe_message_channel::message_handler handler, bool first_instance = true) {
+    channels_.emplace_back(
+        pipe_name_, 
+        first_instance ? mode_ : io_mode::create_multiple_instance, 
+        io_service_, 
+        io_worker_, 
+        std::bind(
+            &pipe_message_service::message_handler, 
+            this, 
+            handler, 
+            std::placeholders::_1));
+    auto& channel = channels_.back();
+    io_worker_.dispatch(&pipe_message_channel::connect, &channel);
+    return channel;
+  }
+
+  void close_channel(pipe_message_channel& channel) {
+    channels_.remove_if([&channel](const pipe_message_channel& object) {
+      return &object == &channel;
+    });
+  }
+
+private:
+  void message_handler(
+      pipe_message_channel::message_handler handler,
+      pipe_message_channel& channel) {
+
+    // Close channel whether channel had broken or close.
+    if (channel.type() == io_type::broken ||
+        channel.type() == io_type::close) {
+      io_worker_.dispatch(&pipe_message_service::close_channel, this, std::ref(channel));
+    } else if (channel.type() == io_type::read) {
+      if (handler) {
+        handler(channel);
+      }
+    } else if (channel.type() == io_type::create) {
+      create_channel(handler, false);
+    }
+  }
+
+private:
+  std::wstring pipe_name_;
+  io_mode mode_;
+  io_completion_service io_service_;
+  io_completion_worker io_worker_;
+  std::list<pipe_message_channel> channels_;
 };
 
 } // namespace windows

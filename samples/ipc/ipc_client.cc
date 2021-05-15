@@ -7,20 +7,38 @@
 #include <sstream>
 #include <iostream>
 
-int main(int argc, char* argv[]) {
-  std::wstring pipe_name(L"\\\\.\\pipe\\ipc_sample");
-  calf::pipe_message_service::message_received_handler handler = [](std::unique_ptr<calf::pipe_message>& message) {
-    std::cout << "id=" << message->head()->id << " size=" << message->head()->size << std::endl;
-  };
-  calf::pipe_message_service service(pipe_name, calf::io_mode::open, handler);
+class EchoClient {
+public:
+  EchoClient()
+    : pipe_service_(
+          L"\\\\.\\pipe\\echo_server", 
+          calf::io_mode::open),
+      thread_(&calf::pipe_message_service::run, &pipe_service_) {}
 
-  for (int i=0; i< 10; ++i) {
-    auto message = std::make_unique<calf::pipe_message>(1 + i, 10);
-    memset(message->data(), 'a' + i, 10);
-    service.send_message(std::move(message));
+  void Run() {
+    auto& channel = pipe_service_.create_channel(
+      std::bind(&EchoClient::MessageHandler, this, std::placeholders::_1));
+    auto message = std::make_unique<calf::pipe_message>(0, std::string("test"));
+    channel.send_message(std::move(message));
+    thread_.join();
   }
 
-  std::thread thread(&calf::pipe_message_service::run, &service);
-  thread.join();
+  void MessageHandler(calf::pipe_message_channel& channel) {
+    auto message = channel.receive_message();
+    while(message) {
+      std::cerr << "id=" << message->head()->id << " size=" << message->head()->size << 
+          " data=" << std::string(reinterpret_cast<char*>(message->data()), message->head()->size) << std::endl;
+      message = channel.receive_message();
+    }
+  }
+
+private:  
+  calf::pipe_message_service pipe_service_;
+  std::thread thread_;
+};
+
+int main(int argc, char* argv[]) {
+  EchoClient client;
+  client.Run();
   return 0;    
 }

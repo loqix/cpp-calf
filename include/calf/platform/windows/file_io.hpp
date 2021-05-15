@@ -33,7 +33,8 @@ enum struct io_type {
 
 enum struct io_mode {
   open,
-  create
+  create,
+  create_multiple_instance
 };
 
 struct overlapped_io_context {
