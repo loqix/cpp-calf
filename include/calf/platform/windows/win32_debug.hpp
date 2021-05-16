@@ -9,6 +9,8 @@
 #include <iostream>
 #include <sstream>
 
+#pragma comment(lib, "Dbghelp.lib")
+
 #define CALF_CHECK(result) calf::platform::windows::check(result, __FILE__, __LINE__)
 #define CALF_ASSERT(result) calf::platform::windows::check(result, __FILE__, __LINE__)
 #define CALF_WIN32_CHECK(result, func) calf::platform::windows::win32_check(result, #func, __FILE__, __LINE__)
@@ -94,7 +96,7 @@ win32_log& check(bool expr, const char* file, int line) {
 
 win32_log& win32_check(bool expr, const char* func, const char* file, int line) {
   if (!expr) {
-    DWORD err = GetLastError(); 
+    DWORD err = ::GetLastError(); 
     std::string error_format = get_error_format(err);
     std::cerr << "[" << file << "(" << line << ")] " <<
         func << " failed with error " << err << ": " << error_format << std::endl;

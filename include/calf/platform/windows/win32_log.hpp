@@ -13,6 +13,10 @@ win32_log& operator << (win32_log& log, const char* str) {
   return log;
 }
 
+win32_log& operator << (win32_log& log, int n) {
+  return log;
+}
+
 static win32_log global_win32_log;
 
 } // namespace windows
