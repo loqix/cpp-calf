@@ -2,9 +2,12 @@
 #define CALF_PLATFORM_WINDOWS_NETWORKING_HPP_
 
 #include "win32_debug.hpp"
+#include "file_io.hpp"
 
 #include <winsock2.h>
 #include <ws2tcpip.h>
+
+#include <mutex>
 
 #pragma comment(lib, "Ws2_32.lib")
 
@@ -32,9 +35,12 @@ win32_log& wsa_check(bool expr, const char* func, const char* file, int line) {
 
 class winsock {
 public:
-  winsock() 
+  winsock(io_completion_service& iocp) 
     : has_init_(false) { startup(); }
   ~winsock() { cleanup(); }
+
+public:
+  
 
 private:
   void startup() {
@@ -57,29 +63,65 @@ private:
 
 class socket {
 public:
-  socket()
-    : socket_(INVALID_SOCKET) {}
+  socket(io_completion_service& io_service)
+    : socket_(INVALID_SOCKET) {
+    create();  
+    if (is_valid()) {
+      io_service.register_handle(reinterpret_cast<HANDLE>(socket_), ;
+    }
+  }
+
+  void bind() {
+    CALF_CHECK(is_valid());
+    if (!is_valid()) {
+      return;
+    }
+
+    SOCKADDR_IN local_addr;
+    local_addr.sin_family = AF_INET;
+    local_addr.sin_addr.s_addr = ::inet_addr("127.0.0.1");
+    local_addr.sin_port = ::htons(4900);
+
+    int result = ::bind(
+        socket_, 
+        reinterpret_cast<SOCKADDR*>(&local_addr), 
+        sizeof(local_addr));
+    CALF_WSA_CHECK(result != SOCKET_ERROR, bind);
+  }
+
+  void listen() {
+    CALF_CHECK(is_valid());
+    if (!is_valid()) {
+      return;
+    }
+
+    int result = ::listen(socket_, SOMAXCONN);
+    CALF_WSA_CHECK(result != SOCKET_ERROR, listen);
+  }
+  
+  void accept() {
+
+  }
+
+  bool is_valid() { return socket_ != INVALID_SOCKET; }
 
 private:
-  void create_tcp() {
-    ADDRINFOW info_hints;
-    ADDRINFOW* info_result = nullptr;
+  void create() {
+    socket_ = ::WSASocketW(
+        AF_INET,      // IPv4
+        SOCK_STREAM,  // TCP
+        0,
+        NULL,
+        0,
+        WSA_FLAG_OVERLAPPED);
+    CALF_WSA_CHECK(is_valid(), WSASocketW);
+  }
 
-    memset(&info_hints, 0, sizeof(info_hints));
-    info_hints.ai_family = AF_INET;
-    info_hints.ai_socktype = SOCK_STREAM;
-    info_hints.ai_protocol = IPPROTO_TCP;
-    info_hints.ai_flags = AI_PASSIVE;
-
-    int result = ::GetAddrInfoW(NULL, L"4900", &info_hints, &info_result);
-    CALF_WSA_CHECK(result == 0, GetAddrInfoW);
-
-    if (result == 0) {
-      socket_ = ::socket(
-          info_result->ai_family,
-          info_result->ai_socktype,
-          info_result->ai_protocol);
-      CALF_WSA_CHECK(socket_ != INVALID_SOCKET, socket);
+  void close() {
+    if (is_valid()) {
+      int result = ::closesocket(socket_);
+      CALF_WSA_CHECK(result, closesocket);
+      socket_ = INVALID_SOCKET;
     }
   }
 

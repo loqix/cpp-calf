@@ -176,6 +176,7 @@ protected:
   std::atomic_bool quit_flag_;
 
 friend class named_pipe;
+friend class socket;
 };
 
 class file
