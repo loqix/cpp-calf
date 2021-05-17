@@ -122,8 +122,8 @@ protected:
 
 class io_completion_handler {
 public:
-  virtual void io_completed(overlapped_io_context* context) {};
-  virtual void io_broken(overlapped_io_context* context, DWORD err) {};
+  virtual void io_completed(overlapped_io_context* context) {}
+  virtual void io_broken(overlapped_io_context* context, DWORD err) {}
   virtual ~io_completion_handler() {}
 };
 
@@ -223,7 +223,7 @@ public:
 
   void write(
       io_context& context,
-      io_handler handler) {
+      const io_handler& handler) {
     context.handler = handler;
     write(context);
   }

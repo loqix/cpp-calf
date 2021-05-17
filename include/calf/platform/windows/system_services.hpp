@@ -51,7 +51,7 @@ public:
       io_context.handler(io_context);
     } else {
       BOOL bret = ::ConnectNamedPipe(handle_, &io_context.overlapped);
-      CALF_WIN32_CHECK(bret == FALSE, ConnectNamedPipe); // 异步总是返回 FALSE。
+      CALF_CHECK(bret == FALSE); // 异步总是返回 FALSE。
       if (bret == FALSE) {
         DWORD err = ::GetLastError();
         CALF_WIN32_CHECK(err == ERROR_IO_PENDING || err == ERROR_PIPE_CONNECTED, ConnectNamedPipe);
