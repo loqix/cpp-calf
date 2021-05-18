@@ -62,8 +62,20 @@ private:
   bool has_init_;
 };
 
+struct socket_context
+  : public io_context {
+  socket_context() : io_context() {
+    memset(&wsabuf, 0, sizeof(wsabuf));
+  }
+
+  WSABUF wsabuf;
+};
+
 class socket
   : public io_completion_handler {
+public:
+  static const std::size_t default_buffer_size = 4 * 1024;
+
 public:
   socket(io_completion_service& io_service)
     : socket_(INVALID_SOCKET) {
@@ -101,16 +113,16 @@ public:
     CALF_WSA_CHECK(result != SOCKET_ERROR, listen);
   }
 
-  void accept(io_context& context, socket& accept_socket, const io_handler& handler) {
+  void accept(socket_context& context, socket& accept_socket, const io_handler& handler) {
     context.handler = handler;
     accept(context, accept_socket);
   }
   
-  void accept(io_context& context, socket& accept_socket) {
+  void accept(socket_context& context, socket& accept_socket) {
     LPFN_ACCEPTEX accept_ex = get_accept_ex();
     if (accept_ex != nullptr) {
       context.type = io_type::create;
-      context.buffer.resize(file::default_buffer_size);
+      context.buffer.resize(default_buffer_size);
       DWORD bytes_received = 0;
       BOOL result = accept_ex(
           socket_, 
@@ -121,23 +133,21 @@ public:
           sizeof(SOCKADDR_IN) + 16,
           &bytes_received,
           &context.overlapped);
-      CALF_CHECK(result == FALSE);
-      if (result == FALSE) {
-        int err = ::WSAGetLastError();
-        CALF_WSA_CHECK(err == WSA_IO_PENDING, AcceptEx);
-        if (err == WSA_IO_PENDING) {
-          context.is_pending = true;
-        }
+      CALF_ASSERT(result == FALSE);
+      int err = ::WSAGetLastError();
+      CALF_WSA_CHECK(err == WSA_IO_PENDING, AcceptEx);
+      if (err == WSA_IO_PENDING) {
+        context.is_pending = true;
       }
     }
   }
 
-  void connect(io_context& context, const io_handler& handler) {
+  void connect(socket_context& context, const io_handler& handler) {
     context.handler = handler;
     connect(context);
   }
 
-  void connect(io_context& context) {
+  void connect(socket_context& context) {
     SOCKADDR_IN remote_addr;
     remote_addr.sin_family = AF_INET;
     remote_addr.sin_addr.s_addr = ::inet_addr("127.0.0.1");
@@ -146,7 +156,7 @@ public:
     LPFN_CONNECTEX connect_ex = get_connect_ex();
     if (connect_ex != nullptr) {
       context.type = io_type::create;
-      context.buffer.resize(file::default_buffer_size);
+      context.buffer.resize(default_buffer_size);
       DWORD bytes_sent = 0;
       BOOL result = connect_ex(
         socket_,
@@ -156,40 +166,99 @@ public:
         context.buffer.size(),
         &bytes_sent,
         &context.overlapped);
-      CALF_CHECK(result == FALSE);
-      if (result == FALSE) {
-        int err = ::WSAGetLastError();
-        CALF_WSA_CHECK(err == WSA_IO_PENDING, ConnectEx);
-        if (err == WSA_IO_PENDING) {
-          context.is_pending = true;
-        }
+      CALF_ASSERT(result == FALSE);
+      int err = ::WSAGetLastError();
+      CALF_WSA_CHECK(err == WSA_IO_PENDING, ConnectEx);
+      if (err == WSA_IO_PENDING) {
+        context.is_pending = true;
       }
+    }
+  }
+
+  void send(socket_context& context, const io_handler& handler) {
+    context.handler = handler;
+    send(context);
+  }
+
+  void send(socket_context& context) {
+    context.type = io_type::write;
+    context.wsabuf.buf = reinterpret_cast<CHAR*>(context.buffer.data());
+    context.wsabuf.len = context.buffer.size();
+    int result = ::WSASend(
+        socket_,
+        &context.wsabuf,
+        1,
+        NULL,
+        NULL,
+        &context.overlapped,
+        NULL);
+    CALF_ASSERT(result == FALSE);
+    int err = ::WSAGetLastError();
+    CALF_WSA_CHECK(err == WSA_IO_PENDING, WSASend);
+    if (err == WSA_IO_PENDING) {
+      context.is_pending = true;
+    }
+  }
+
+  void recv(socket_context& context, const io_handler& handler) {
+    context.handler = handler;
+    recv(context);
+  }
+
+  void recv(socket_context& context) {
+    context.type = io_type::read;
+    context.buffer.resize(default_buffer_size);
+    context.wsabuf.buf = reinterpret_cast<CHAR*>(context.buffer.data());
+    context.wsabuf.len = context.buffer.size();
+    int result = ::WSARecv(
+        socket_,
+        &context.wsabuf,
+        1,
+        NULL,
+        NULL,
+        &context.overlapped,
+        NULL);
+    CALF_ASSERT(result == FALSE);
+    int err = ::WSAGetLastError();
+    CALF_WSA_CHECK(err == WSA_IO_PENDING, WSARecv);
+    if (err == WSA_IO_PENDING) {
+      context.is_pending = true;
     }
   }
 
   bool is_valid() { return socket_ != INVALID_SOCKET; }
 
+private:
   // Override class calf::io_completion_handler method.
-  void io_completed(overlapped_io_context* context) {
-    auto ioc = reinterpret_cast<io_context*>(context);
-    if (ioc != nullptr) {
-      switch(ioc->type) {
+  virtual void io_completed(overlapped_io_context* context) override {
+    auto sc = reinterpret_cast<socket_context*>(context);
+    if (sc != nullptr) {
+      switch(sc->type) {
       case io_type::create:
-        ioc->is_pending = false;
+        sc->is_pending = false;
         break;
+      case io_type::write:
+        sc->is_pending = false;
+        sc->buffer.resize(sc->bytes_transferred);
       }
 
-      if (ioc->handler) {
-        ioc->handler(*ioc);
+      if (sc->handler) {
+        sc->handler(*sc);
       }
     }
   }
 
-  void io_broken(overlapped_io_context* context, DWORD err) {
+  void io_broken(overlapped_io_context* context, DWORD err) override {
+    auto sc = reinterpret_cast<socket_context*>(context);
+    if (sc != nullptr) {
+      sc->type = io_type::broken;
+      sc->is_pending = false;
+      if (sc->handler) {
+        sc->handler(*sc);
+      }
+    }
+  }
 
-  };
-
-private:
   void create() {
     socket_ = ::WSASocketW(
         AF_INET,      // IPv4
@@ -251,6 +320,40 @@ private:
 
 private:
   SOCKET socket_;
+};
+
+class socket_channel {
+public:
+  socket_channel(io_completion_service& io_service)
+    : socket_(io_service) {}
+
+private:
+  socket socket_;
+  socket_context send_context_;
+  socket_context recv_context_;
+};
+
+class tcp_service {
+public:
+  tcp_service(const std::string& ip_addr, std::uint16_t port, io_mode mode)
+    : io_worker_(io_service_),
+      ip_addr_(ip_addr),
+      port_(port),
+      mode_(mode) {}
+
+  void run() {
+    io_service_.run_loop();
+  }
+
+  socket_channel& create_socket()
+
+private:
+  std::string ip_addr_;
+  std::uint16_t port_;
+  io_mode mode_;
+  io_completion_service io_service_;
+  io_completion_worker io_worker_;
+  std::list<socket_channel> channels_;
 };
 
 } // namespace windows

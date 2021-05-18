@@ -17,7 +17,7 @@ public:
   using task_t = std::function<void(void)>;
 
 public:
-  worker_service() : quit_flag_(false) {}
+  worker_service() : quit_flag_() {}
   ~worker_service() {
     quit_flag_.store(true, std::memory_order_relaxed);
     cv_.notify_all();
@@ -40,7 +40,7 @@ public:
 
   template<typename Fn, 
       typename ...Args,
-      typename Ret = typename std::result_of<Fn>::type>
+      typename Ret = typename std::result_of<Fn(Args...)>::type>
   std::future<Ret> packaged_dispatch(Fn&& fn, Args&&... args) {
     std::unique_lock<std::mutex> lock(mutex_);
     std::packaged_task<Ret(Args...)> pkg_task(std::forward<Fn>(fn));

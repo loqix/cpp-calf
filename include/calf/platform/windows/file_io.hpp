@@ -6,6 +6,7 @@
 #include "kernel_object.hpp"
 #include "../../worker_service.hpp"
 
+#include <cstdint>
 #include <mutex>
 #include <atomic>
 #include <sstream>

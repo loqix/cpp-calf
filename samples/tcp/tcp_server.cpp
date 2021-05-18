@@ -32,8 +32,8 @@ private:
   calf::winsock winsock_;
   calf::socket listen_socket_;
   calf::socket accept_socket_;
-  calf::io_context recv_context_;
-  calf::io_context send_context_;
+  calf::socket_context recv_context_;
+  calf::socket_context send_context_;
   std::thread thread_;
 };
 
