@@ -12,5 +12,3 @@ add_compile_options("/source-charset:utf-8")
 
 add_executable(ipc_server ${IPC_SERVER_SOURCES})
 add_executable(ipc_client ${IPC_CLIENT_SOURCES})
-target_link_libraries(ipc_server Dbghelp.lib)
-target_link_libraries(ipc_client Dbghelp.lib)

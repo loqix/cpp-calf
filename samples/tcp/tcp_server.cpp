@@ -6,34 +6,32 @@
 class EchoServer {
 public:
   EchoServer() 
-    : io_worker_(io_service_),
-      listen_socket_(io_service_),
-      accept_socket_(io_service_),
-      thread_(&calf::io_completion_service::run_loop, &io_service_) {}
+    : thread_(&calf::tcp_service::run, &tcp_service_) {}
 
   void Run() {
-    listen_socket_.bind("127.0.0.1", 4900);
-    listen_socket_.listen();
-    recv_context_.type = calf::io_type::create;
-    listen_socket_.accept(
-        recv_context_, 
-        accept_socket_, 
-        std::bind(&EchoServer::OnAccept, this));
+    auto& listen_channel = tcp_service_.create_socket(std::bind(&EchoServer::OnAccept, this, std::placeholders::_1));
+    listen_channel.listen("127.0.0.1", 4900);
+    auto& accept_channel = tcp_service_.create_socket(std::bind(&EchoServer::OnRecv, this, std::placeholders::_1));
+    listen_channel.accept(accept_channel);
+
     thread_.join();
   }
 
-  void OnAccept() {
+  void OnAccept(calf::socket_channel& channel) {
+    auto& accept_channel = tcp_service_.create_socket(std::bind(&EchoServer::OnRecv, this, std::placeholders::_1));
+    channel.accept(accept_channel);
     std::cout << "on accept." << std::endl;
   }
 
+  void OnRecv(calf::socket_channel& channel) {
+    auto buffer = channel.recv_buffer();
+    std::cout << "on recv: " << 
+        std::string(reinterpret_cast<char*>(buffer.data()), buffer.size()) << std::endl;
+    channel.send_buffer(buffer);
+  }
+
 private:
-  calf::io_completion_service io_service_;
-  calf::io_completion_worker io_worker_;
-  calf::winsock winsock_;
-  calf::socket listen_socket_;
-  calf::socket accept_socket_;
-  calf::socket_context recv_context_;
-  calf::socket_context send_context_;
+  calf::tcp_service tcp_service_;
   std::thread thread_;
 };
 

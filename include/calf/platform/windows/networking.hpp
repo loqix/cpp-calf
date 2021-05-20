@@ -9,6 +9,11 @@
 #include <mswsock.h>
 
 #include <mutex>
+#include <list>
+#include <functional>
+#include <string>
+#include <iostream>
+#include <vector>
 
 #pragma comment(lib, "Ws2_32.lib")
 
@@ -75,6 +80,7 @@ class socket
   : public io_completion_handler {
 public:
   static const std::size_t default_buffer_size = 4 * 1024;
+  static const std::size_t max_buffer_size = 128 * 1024 * 1024;
 
 public:
   socket(io_completion_service& io_service)
@@ -142,16 +148,23 @@ public:
     }
   }
 
-  void connect(socket_context& context, const io_handler& handler) {
+  void connect(
+      const std::string& ip_addr, 
+      std::uint16_t port, 
+      socket_context& context, 
+      const io_handler& handler) {
     context.handler = handler;
-    connect(context);
+    connect(ip_addr, port, context);
   }
 
-  void connect(socket_context& context) {
+  void connect(
+      const std::string& ip_addr, 
+      std::uint16_t port, 
+      socket_context& context) {
     SOCKADDR_IN remote_addr;
     remote_addr.sin_family = AF_INET;
-    remote_addr.sin_addr.s_addr = ::inet_addr("127.0.0.1");
-    remote_addr.sin_port = ::htons(4900);
+    remote_addr.sin_addr.s_addr = ::inet_addr(ip_addr.c_str());
+    remote_addr.sin_port = ::htons(port);
 
     LPFN_CONNECTEX connect_ex = get_connect_ex();
     if (connect_ex != nullptr) {
@@ -184,19 +197,27 @@ public:
     context.type = io_type::write;
     context.wsabuf.buf = reinterpret_cast<CHAR*>(context.buffer.data());
     context.wsabuf.len = context.buffer.size();
+
+    DWORD bytes_sent = 0;
     int result = ::WSASend(
         socket_,
         &context.wsabuf,
         1,
-        NULL,
-        NULL,
+        &bytes_sent,
+        0,
         &context.overlapped,
         NULL);
-    CALF_ASSERT(result == FALSE);
-    int err = ::WSAGetLastError();
-    CALF_WSA_CHECK(err == WSA_IO_PENDING, WSASend);
-    if (err == WSA_IO_PENDING) {
-      context.is_pending = true;
+    if (result == FALSE) {
+      int err = ::WSAGetLastError();
+      //CALF_WSA_CHECK(err == WSA_IO_PENDING || err == 0, WSASend);
+      if (err == WSA_IO_PENDING) {
+        context.is_pending = true;
+      }
+    } else {
+      context.type = io_type::broken;
+      if (context.handler) {
+        context.handler(context);
+      }
     }
   }
 
@@ -210,19 +231,28 @@ public:
     context.buffer.resize(default_buffer_size);
     context.wsabuf.buf = reinterpret_cast<CHAR*>(context.buffer.data());
     context.wsabuf.len = context.buffer.size();
+
+    DWORD bytes_received = 0;
+    DWORD flags = 0;
     int result = ::WSARecv(
         socket_,
         &context.wsabuf,
         1,
-        NULL,
-        NULL,
+        &bytes_received,
+        &flags,
         &context.overlapped,
         NULL);
-    CALF_ASSERT(result == FALSE);
-    int err = ::WSAGetLastError();
-    CALF_WSA_CHECK(err == WSA_IO_PENDING, WSARecv);
-    if (err == WSA_IO_PENDING) {
-      context.is_pending = true;
+    if (result == FALSE) {
+      int err = ::WSAGetLastError();
+      //CALF_WSA_CHECK(err == WSA_IO_PENDING || err == 0, WSARecv);
+      if (err == WSA_IO_PENDING) {
+        context.is_pending = true;
+      }
+    } else {
+      context.type = io_type::broken;
+      if (context.handler) {
+        context.handler(context);
+      }
     }
   }
 
@@ -238,6 +268,9 @@ private:
         sc->is_pending = false;
         break;
       case io_type::write:
+        sc->is_pending = false;
+        sc->buffer.resize(sc->bytes_transferred);
+      case io_type::read:
         sc->is_pending = false;
         sc->buffer.resize(sc->bytes_transferred);
       }
@@ -324,35 +357,177 @@ private:
 
 class socket_channel {
 public:
-  socket_channel(io_completion_service& io_service)
-    : socket_(io_service) {}
+  using socket_handler = std::function<void(socket_channel&)>;
+  using socket_buffer = std::vector<std::uint8_t>;
+
+public:
+  socket_channel(io_completion_service& io_service, const socket_handler& handler)
+    : socket_(io_service),
+      handler_(handler),
+      connected_flag_(false) {}
+
+  void connect(const std::string& ip_addr, std::uint16_t port) {
+    socket_.bind("0.0.0.0", 0);
+    socket_.connect(ip_addr, port, recv_context_, std::bind(&socket_channel::connect_completed, this));
+  }
+
+  void listen(const std::string& ip_addr, std::uint16_t port) {
+    socket_.bind(ip_addr, port);
+    socket_.listen();
+  }
+
+  void accept(socket_channel& channel) {
+    socket_.accept(recv_context_, channel.socket_, std::bind(&socket_channel::connect_completed, this));
+  }
+
+  void send_buffer(std::uint8_t* data, std::size_t size) {
+    std::unique_lock<std::mutex> lock(send_mutex_);
+
+    std::size_t offset = send_buffer_.size();
+    CALF_CHECK(offset + size < socket::max_buffer_size);
+
+    send_buffer_.resize(offset + size);
+    memcpy(send_buffer_.data() + offset, data, size);
+    lock.unlock();
+
+    send();
+  }
+
+  void send_buffer(socket_buffer& buffer) {
+    std::unique_lock<std::mutex> lock(send_mutex_);
+
+    std::size_t offset = send_buffer_.size();
+    if (offset == 0) {
+      send_buffer_.swap(buffer);
+    } else {
+      CALF_CHECK(offset + buffer.size() < socket::max_buffer_size);
+
+      send_buffer_.resize(offset + buffer.size());
+      memcpy(send_buffer_.data() + offset, buffer.data(), buffer.size());
+    }
+    lock.unlock();
+
+    send();
+  }
+
+  socket_buffer recv_buffer() {
+    std::unique_lock<std::mutex> lock(recv_mutex_);
+    socket_buffer buffer;
+    buffer.swap(recv_buffer_);
+    return std::move(buffer);
+  }
+
+  void recv_buffer(socket_buffer& buffer) {
+    std::unique_lock<std::mutex> lock(recv_mutex_);
+    buffer.swap(recv_buffer_);
+  }
+
+private:
+  void connect_completed() {
+    connected_flag_.store(true, std::memory_order_relaxed);
+
+    if (handler_) {
+      handler_(*this);
+    }
+
+    send();
+    recv();
+  }
+
+  void send() {
+    if (send_context_.is_pending || !connected_flag_.load(std::memory_order_relaxed)) {
+      return;
+    }
+
+    // Swap send buffer.
+    std::unique_lock<std::mutex> lock(send_mutex_);
+    send_context_.buffer.swap(send_buffer_);
+    send_buffer_.clear();
+    lock.unlock();
+
+    socket_.send(send_context_, std::bind(&socket_channel::send_completed, this));
+  }
+
+  void send_completed() {
+    if (send_context_.type != io_type::write) {
+      closed();
+      return;
+    }
+    send();
+  }
+
+  void recv() {
+    if (recv_context_.is_pending || !connected_flag_.load(std::memory_order_relaxed)) {
+      return;
+    }
+    
+    socket_.recv(recv_context_, std::bind(&socket_channel::recv_completed, this));
+  }
+
+  void recv_completed() {
+    if (recv_context_.type != io_type::read) {
+      closed();
+      return;
+    }
+
+    std::unique_lock<std::mutex> lock(recv_mutex_);
+    std::size_t offset = recv_buffer_.size();
+    if (offset == 0) {
+      recv_buffer_.swap(recv_context_.buffer);
+    } else {
+      CALF_CHECK(offset + recv_context_.buffer.size() < socket::max_buffer_size);
+      recv_buffer_.resize(offset + recv_context_.buffer.size());
+      memcpy(
+          recv_buffer_.data() + offset, 
+          recv_context_.buffer.data(), 
+          recv_context_.buffer.size());
+    }
+    lock.unlock();
+
+    if (handler_) {
+      handler_(*this);
+    }
+
+    recv();
+  }
+
+  void closed() {
+    if (handler_) {
+      handler_(*this);
+    }
+  }
 
 private:
   socket socket_;
+  std::atomic_bool connected_flag_;
+  socket_buffer send_buffer_;
+  socket_buffer recv_buffer_;
+  std::mutex send_mutex_;
+  std::mutex recv_mutex_;
   socket_context send_context_;
   socket_context recv_context_;
+  socket_handler handler_;
 };
 
 class tcp_service {
 public:
-  tcp_service(const std::string& ip_addr, std::uint16_t port, io_mode mode)
-    : io_worker_(io_service_),
-      ip_addr_(ip_addr),
-      port_(port),
-      mode_(mode) {}
+  tcp_service()
+    : io_worker_(io_service_) {}
 
   void run() {
     io_service_.run_loop();
   }
 
-  socket_channel& create_socket()
+  socket_channel& create_socket(const socket_channel::socket_handler& handler) {
+    channels_.emplace_back(io_service_, handler);
+    auto& channel = channels_.back();
+    return channel;
+  }
 
 private:
-  std::string ip_addr_;
-  std::uint16_t port_;
-  io_mode mode_;
   io_completion_service io_service_;
   io_completion_worker io_worker_;
+  winsock winsock_;
   std::list<socket_channel> channels_;
 };
 
