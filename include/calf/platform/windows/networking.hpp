@@ -74,6 +74,8 @@ struct socket_context
   }
 
   WSABUF wsabuf;
+  SOCKADDR_IN local_addr;
+  SOCKADDR_IN remote_addr;
 };
 
 class socket
@@ -130,6 +132,9 @@ public:
       context.type = io_type::create;
       context.buffer.resize(default_buffer_size);
       DWORD bytes_received = 0;
+
+      // AcceptEx 函数的特性，在缓存区尾部会写入本地和远程 Socket 的地址信息。
+      // 所以需要留出部分空间。
       BOOL result = accept_ex(
           socket_, 
           accept_socket.socket_,
@@ -168,14 +173,13 @@ public:
 
     LPFN_CONNECTEX connect_ex = get_connect_ex();
     if (connect_ex != nullptr) {
-      context.type = io_type::create;
-      context.buffer.resize(default_buffer_size);
+      context.type = io_type::open;
       DWORD bytes_sent = 0;
       BOOL result = connect_ex(
         socket_,
         reinterpret_cast<SOCKADDR*>(&remote_addr),
         sizeof(remote_addr),
-        context.buffer.data(),
+        context.buffer.empty() ? NULL : context.buffer.data(),
         context.buffer.size(),
         &bytes_sent,
         &context.overlapped);
@@ -208,15 +212,16 @@ public:
         &context.overlapped,
         NULL);
     if (result == FALSE) {
+    } else {
       int err = ::WSAGetLastError();
       //CALF_WSA_CHECK(err == WSA_IO_PENDING || err == 0, WSASend);
       if (err == WSA_IO_PENDING) {
         context.is_pending = true;
-      }
-    } else {
-      context.type = io_type::broken;
-      if (context.handler) {
-        context.handler(context);
+      } else {
+        context.type = io_type::broken;
+        if (context.handler) {
+          context.handler(context);
+        }
       }
     }
   }
@@ -242,16 +247,17 @@ public:
         &flags,
         &context.overlapped,
         NULL);
-    if (result == FALSE) {
+    if (result == 0) {
+    } else {
       int err = ::WSAGetLastError();
-      //CALF_WSA_CHECK(err == WSA_IO_PENDING || err == 0, WSARecv);
+      CALF_WSA_CHECK(err == WSA_IO_PENDING || err == 0, WSARecv);
       if (err == WSA_IO_PENDING) {
         context.is_pending = true;
-      }
-    } else {
-      context.type = io_type::broken;
-      if (context.handler) {
-        context.handler(context);
+      } else {
+        context.type = io_type::broken;
+        if (context.handler) {
+          context.handler(context);
+        }
       }
     }
   }
@@ -264,15 +270,47 @@ private:
     auto sc = reinterpret_cast<socket_context*>(context);
     if (sc != nullptr) {
       switch(sc->type) {
-      case io_type::create:
+      case io_type::create: {
+        sc->is_pending = false;
+        LPFN_GETACCEPTEXSOCKADDRS get_accept_ex_sockaddrs = get_get_connect_ex_sockaddrs();
+        if (get_accept_ex_sockaddrs != nullptr) {
+          SOCKADDR* local_addr = nullptr;
+          SOCKADDR* remote_addr = nullptr;
+          INT local_addr_size = 0;
+          INT remote_addr_size = 0;
+          get_accept_ex_sockaddrs(
+              sc->buffer.data(), 
+              sc->buffer.size() - ((sizeof(SOCKADDR_IN) + 16) * 2),
+              sizeof(SOCKADDR_IN) + 16,
+              sizeof(SOCKADDR_IN) + 16,
+              &local_addr, 
+              &local_addr_size,
+              &remote_addr, 
+              &remote_addr_size);
+          if (local_addr != nullptr) {
+            memcpy(&sc->local_addr, local_addr, 
+                std::min(sizeof(sc->local_addr), static_cast<std::size_t>(local_addr_size)));
+          }
+          if (remote_addr != nullptr) {
+            memcpy(&sc->remote_addr, remote_addr, 
+                std::min(sizeof(sc->remote_addr), static_cast<std::size_t>(remote_addr_size)));
+          }
+          CALF_ASSERT(remote_addr != nullptr);
+        }
+        sc->buffer.resize(sc->bytes_transferred);
+        break;
+      }
+      case io_type::open:
         sc->is_pending = false;
         break;
       case io_type::write:
         sc->is_pending = false;
         sc->buffer.resize(sc->bytes_transferred);
+        break;
       case io_type::read:
         sc->is_pending = false;
         sc->buffer.resize(sc->bytes_transferred);
+        break;
       }
 
       if (sc->handler) {
@@ -351,6 +389,26 @@ private:
     return connect_ex;
   }
 
+  LPFN_GETACCEPTEXSOCKADDRS get_get_connect_ex_sockaddrs() {
+    static LPFN_GETACCEPTEXSOCKADDRS get_connect_ex_sockaddrs = nullptr;
+    if (get_connect_ex_sockaddrs == nullptr) {
+      GUID get_connect_ex_sockaddrs_guid = WSAID_GETACCEPTEXSOCKADDRS;
+      DWORD bytes = 0;
+      int result = ::WSAIoctl(
+        socket_,
+        SIO_GET_EXTENSION_FUNCTION_POINTER,
+        &get_connect_ex_sockaddrs_guid,
+        sizeof(get_connect_ex_sockaddrs_guid),
+        &get_connect_ex_sockaddrs,
+        sizeof(get_connect_ex_sockaddrs),
+        &bytes,
+        NULL,
+        NULL);
+      CALF_WSA_CHECK(result != SOCKET_ERROR, WSAIoctl);
+    }
+    return get_connect_ex_sockaddrs;
+  }
+
 private:
   SOCKET socket_;
 };
@@ -368,7 +426,14 @@ public:
 
   void connect(const std::string& ip_addr, std::uint16_t port) {
     socket_.bind("0.0.0.0", 0);
-    socket_.connect(ip_addr, port, recv_context_, std::bind(&socket_channel::connect_completed, this));
+
+    // 初始连接就可以发送数据了。 
+    std::unique_lock<std::mutex> lock(send_mutex_);
+    send_context_.buffer.swap(send_buffer_);
+    send_buffer_.clear();
+    lock.unlock();
+
+    socket_.connect(ip_addr, port, send_context_, std::bind(&socket_channel::connect_completed, this));
   }
 
   void listen(const std::string& ip_addr, std::uint16_t port) {
@@ -377,10 +442,10 @@ public:
   }
 
   void accept(socket_channel& channel) {
-    socket_.accept(recv_context_, channel.socket_, std::bind(&socket_channel::accept_completed, this, std::ref(channel)));
+    socket_.accept(channel.recv_context_, channel.socket_, std::bind(&socket_channel::accept_completed, this, std::ref(channel)));
   }
 
-  void send_buffer(std::uint8_t* data, std::size_t size) {
+  void send_buffer(const std::uint8_t* data, std::size_t size) {
     std::unique_lock<std::mutex> lock(send_mutex_);
 
     std::size_t offset = send_buffer_.size();
@@ -391,6 +456,10 @@ public:
     lock.unlock();
 
     send();
+  }
+
+  void send_buffer(const std::string& data) {
+    send_buffer(reinterpret_cast<const std::uint8_t*>(data.c_str()), data.size());
   }
 
   void send_buffer(socket_buffer& buffer) {
@@ -422,6 +491,18 @@ public:
     buffer.swap(recv_buffer_);
   }
 
+  io_type get_type() {
+    return recv_context_.type;
+  }
+
+  std::string get_remote_addr() {
+    return ::inet_ntoa(recv_context_.remote_addr.sin_addr);
+  }
+
+  std::uint16_t get_remote_port() {
+    return ::ntohs(recv_context_.remote_addr.sin_port);
+  }
+
 private:
   void accept_completed(socket_channel& channel) {
     if (handler_) {
@@ -433,6 +514,11 @@ private:
 
   void connect_completed() {
     connected_flag_.store(true, std::memory_order_relaxed);
+
+    // 初次连接就可能接收到数据。
+    std::unique_lock<std::mutex> lock(recv_mutex_);
+    recv_buffer_.swap(recv_context_.buffer);
+    lock.unlock(); // 后面调用 handler 时可能重复加锁。
 
     if (handler_) {
       handler_(*this);
@@ -447,8 +533,13 @@ private:
       return;
     }
 
-    // Swap send buffer.
+    // 发送缓存区中的数据，直接交换 buffer 即可。
     std::unique_lock<std::mutex> lock(send_mutex_);
+
+    if (send_buffer_.empty()) {
+      return;
+    }
+
     send_context_.buffer.swap(send_buffer_);
     send_buffer_.clear();
     lock.unlock();

@@ -26,6 +26,7 @@ using io_buffer = std::vector<std::uint8_t>;
 enum struct io_type {
   unknown,
   create,
+  open,
   write, 
   read,
   close,

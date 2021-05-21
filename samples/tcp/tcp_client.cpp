@@ -10,17 +10,20 @@ public:
 
   void Run() {
     auto& channel = tcp_service_.create_socket(std::bind(&EchoClient::OnRecv, this, std::placeholders::_1));
+    channel.send_buffer("hello");
+    channel.send_buffer("world");
     channel.connect("127.0.0.1", 4900);
-    calf::socket_channel::socket_buffer buffer(10, 'n');
-    channel.send_buffer(buffer);
+    channel.send_buffer("nnnnnnnnnn");
 
     thread_.join();
   }
 
   void OnRecv(calf::socket_channel& channel) {
     auto buffer = channel.recv_buffer();
-    std::cout << "on recv: " << 
-        std::string(reinterpret_cast<char*>(buffer.data()), buffer.size()) << std::endl;
+    if (!buffer.empty()) {
+      std::cout << "on recv: " <<
+          std::string(reinterpret_cast<char*>(buffer.data()), buffer.size()) << " size=" << buffer.size() << std::endl;
+    }
   }
 private:
   calf::tcp_service tcp_service_;

@@ -24,10 +24,14 @@ public:
   }
 
   void OnRecv(calf::socket_channel& channel) {
+    auto type = channel.get_type();
+    if (type == calf::io_type::create) {
+      std::cout << "remote_addr=" << channel.get_remote_addr() << " remote_port=" << channel.get_remote_port() <<std::endl;
+    }
     auto buffer = channel.recv_buffer();
     if (!buffer.empty()) {
       std::cout << "on recv: " << 
-          std::string(reinterpret_cast<char*>(buffer.data()), buffer.size()) << std::endl;
+          std::string(reinterpret_cast<char*>(buffer.data()), buffer.size()) << " size=" << buffer.size() << std::endl;
       channel.send_buffer(buffer);
     }
   }
