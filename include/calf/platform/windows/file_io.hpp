@@ -176,7 +176,7 @@ protected:
   std::mutex mtx_;
   std::atomic_bool quit_flag_;
 
-friend class named_pipe;
+friend class system_pipe;
 friend class socket;
 };
 

@@ -25,9 +25,11 @@ public:
 
   void OnRecv(calf::socket_channel& channel) {
     auto buffer = channel.recv_buffer();
-    std::cout << "on recv: " << 
-        std::string(reinterpret_cast<char*>(buffer.data()), buffer.size()) << std::endl;
-    channel.send_buffer(buffer);
+    if (!buffer.empty()) {
+      std::cout << "on recv: " << 
+          std::string(reinterpret_cast<char*>(buffer.data()), buffer.size()) << std::endl;
+      channel.send_buffer(buffer);
+    }
   }
 
 private:

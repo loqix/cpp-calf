@@ -377,7 +377,7 @@ public:
   }
 
   void accept(socket_channel& channel) {
-    socket_.accept(recv_context_, channel.socket_, std::bind(&socket_channel::connect_completed, this));
+    socket_.accept(recv_context_, channel.socket_, std::bind(&socket_channel::accept_completed, this, std::ref(channel)));
   }
 
   void send_buffer(std::uint8_t* data, std::size_t size) {
@@ -423,6 +423,14 @@ public:
   }
 
 private:
+  void accept_completed(socket_channel& channel) {
+    if (handler_) {
+      handler_(*this);
+    }
+
+    channel.connect_completed();
+  }
+
   void connect_completed() {
     connected_flag_.store(true, std::memory_order_relaxed);
 

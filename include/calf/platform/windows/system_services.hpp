@@ -15,11 +15,33 @@ namespace calf {
 namespace platform {
 namespace windows {
 
-class named_pipe
+class waitable_object : public kernel_object {
+public:
+  bool wait(DWORD timeout = INFINITE) {
+    DWORD result = ::WaitForSingleObject(handle_, timeout);
+    CALF_WIN32_CHECK(result == WAIT_OBJECT_0, WaitForSingleObject);
+    return result == WAIT_OBJECT_0;
+  }
+};
+
+class system_event : public waitable_object {
+public:
+  system_event(const std::wstring& name, bool auto_reset = false) { 
+    create(name, auto_reset);
+  }
+
+private:
+  void create(const std::wstring& name, bool auto_reset = false) {
+    handle_ = ::CreateEventW(NULL, auto_reset ? TRUE : FALSE, FALSE, name.c_str());
+    CALF_WIN32_CHECK(handle_ != NULL, CreateEventW);
+  }
+};
+
+class system_pipe
   : public file {
 
 public:
-  named_pipe(const std::wstring& pipe_name, io_mode mode)
+  system_pipe(const std::wstring& pipe_name, io_mode mode)
     : connected_flag_(false) {
     switch (mode) {
     case io_mode::create:
@@ -33,11 +55,11 @@ public:
       break;
     }
   }
-  named_pipe(
+  system_pipe(
       const std::wstring& pipe_name, 
       io_mode mode, 
       io_completion_service& io_service)
-    : named_pipe(pipe_name, mode) {
+    : system_pipe(pipe_name, mode) {
     io_service.register_handle(handle_, this);
   }
 
@@ -327,7 +349,7 @@ private:
 private:
   io_completion_worker& io_worker_;
 
-  named_pipe pipe_;
+  system_pipe pipe_;
   std::deque<std::unique_ptr<pipe_message>> send_queue_;
   std::mutex send_mutex_;
   std::deque<std::unique_ptr<pipe_message>> receive_queue_;
