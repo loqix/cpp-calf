@@ -2,11 +2,12 @@
 #define CALF_WORKER_SERVICE_HPP
 
 #include <atomic>
-#include <functional>
-#include <queue>
 #include <condition_variable>
-#include <mutex>
+#include <functional>
 #include <future>
+#include <memory>
+#include <mutex>
+#include <queue>
 #include <type_traits>
 
 
@@ -40,13 +41,15 @@ public:
 
   template<typename Fn, 
       typename ...Args,
-      typename Ret = typename std::result_of<Fn(Args...)>::type>
+      typename Ret = typename std::result_of<Fn>::type>
   std::future<Ret> packaged_dispatch(Fn&& fn, Args&&... args) {
     std::unique_lock<std::mutex> lock(mutex_);
-    std::packaged_task<Ret(Args...)> pkg_task(std::forward<Fn>(fn));
-    auto task_future = pkg_task.get_future();
-    task_queue_.emplace_back(
-        std::bind(std::move(pkg_task), std::forward<Args>(args)...));
+    auto pkg_task = std::make_shared<std::packaged_task<Ret(void)>>(
+        std::bind(std::forward<Fn>(fn), std::forward<Args>(args)...));
+    auto task_future = pkg_task->get_future();
+    task_queue_.emplace_back([pkg_task]() {
+      (*pkg_task)();
+    });
     cv_.notify_one();
     lock.unlock();
     return std::move(task_future);
