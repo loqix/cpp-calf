@@ -453,7 +453,6 @@ private:
 class socket_channel {
 public:
   using socket_handler = std::function<void(socket_channel&)>;
-  using socket_buffer = std::vector<std::uint8_t>;
 
 public:
   socket_channel(io_completion_service& io_service, const socket_handler& handler)
@@ -499,7 +498,9 @@ public:
     send_buffer(reinterpret_cast<const std::uint8_t*>(data.c_str()), data.size());
   }
 
-  void send_buffer(socket_buffer& buffer) {
+  // 直接使用 io_buffer 可以利用移动语义交换缓存区，性能较好。
+  // 推荐使用。
+  void send_buffer(io_buffer& buffer) {
     std::unique_lock<std::mutex> lock(send_mutex_);
 
     std::size_t offset = send_buffer_.size();
@@ -516,14 +517,14 @@ public:
     send();
   }
 
-  socket_buffer recv_buffer() {
+  io_buffer recv_buffer() {
     std::unique_lock<std::mutex> lock(recv_mutex_);
-    socket_buffer buffer;
+    io_buffer buffer;
     buffer.swap(recv_buffer_);
     return std::move(buffer);
   }
 
-  void recv_buffer(socket_buffer& buffer) {
+  void recv_buffer(io_buffer& buffer) {
     std::unique_lock<std::mutex> lock(recv_mutex_);
     buffer.swap(recv_buffer_);
   }
@@ -636,8 +637,8 @@ private:
 private:
   socket socket_;
   std::atomic_bool connected_flag_;
-  socket_buffer send_buffer_;
-  socket_buffer recv_buffer_;
+  io_buffer send_buffer_;
+  io_buffer recv_buffer_;
   std::mutex send_mutex_;
   std::mutex recv_mutex_;
   socket_context send_context_;
@@ -655,6 +656,7 @@ public:
   }
 
   socket_channel& create_socket(const socket_channel::socket_handler& handler) {
+    std::unique_lock<std::mutex> lock(channels_mutex_);
     channels_.emplace_back(io_service_, handler);
     auto& channel = channels_.back();
     return channel;
@@ -665,6 +667,7 @@ private:
   io_completion_worker io_worker_;
   winsock winsock_;
   std::list<socket_channel> channels_;
+  std::mutex channels_mutex_;
 };
 
 } // namespace windows

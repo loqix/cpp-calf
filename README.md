@@ -10,8 +10,11 @@ calf 是一个简单的现代 C++ 模板库，提供一些标准库没有的比�
 
 ### 通用
 
-- **calf/singleton.hpp** 单例模式类模板
+- **calf/singleton.hpp** 单例模式
   - **class SingletonThreadSafe** 线程安全的单例实现
+
+- **calf/worker_service.hpp** 
+  - **class worker_service** 线程任务队列
 
 ### Windows Win32 API 封装
 

@@ -379,6 +379,7 @@ public:
 
   pipe_message_channel& create_channel(
       pipe_message_channel::message_handler handler, bool first_instance = true) {
+    std::unique_lock<std::mutex> lock(channels_mutex_);
     channels_.emplace_back(
         pipe_name_, 
         first_instance ? mode_ : io_mode::create_multiple_instance, 
@@ -395,6 +396,7 @@ public:
   }
 
   void close_channel(pipe_message_channel& channel) {
+    std::unique_lock<std::mutex> lock(channels_mutex_);
     channels_.remove_if([&channel](const pipe_message_channel& object) {
       return &object == &channel;
     });
@@ -424,6 +426,7 @@ private:
   io_completion_service io_service_;
   io_completion_worker io_worker_;
   std::list<pipe_message_channel> channels_;
+  std::mutex channels_mutex_;
 };
 
 } // namespace windows

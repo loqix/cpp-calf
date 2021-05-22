@@ -13,6 +13,7 @@
 #include <iostream>
 #include <functional>
 #include <vector>
+#include <list>
 
 namespace calf {
 namespace platform {
@@ -190,6 +191,21 @@ public:
   static const int default_timeout = 5 * 1000;
 
 public:
+  file() {}
+
+  file(const std::wstring& file_path) {
+    create(file_path);
+  }
+
+  // 托管了文件句柄对象生命周期，所以禁止拷贝构造。
+  file(const file& other) = delete;
+
+  // 提供移动语义。
+  file(file&& other) {
+    handle_ = other.handle_;
+    other.handle_ = NULL;
+  }
+
   void read(
       io_context& context,
       const io_handler& handler) {
@@ -261,7 +277,6 @@ public:
     }
   }
 
-public:
   // Override io_completion_handler method.
   virtual void io_completed(overlapped_io_context* context) override {
     io_context* ioc = static_cast<io_context*>(context);
@@ -304,6 +319,19 @@ public:
       }
     }
   }
+
+private:
+  void create(const std::wstring& file_path) {
+    handle_ = ::CreateFileW(
+        file_path.c_str(),
+        GENERIC_READ | GENERIC_WRITE,
+        0,  // 不共享
+        NULL,
+        OPEN_ALWAYS,
+        FILE_ATTRIBUTE_NORMAL,
+        NULL);
+    CALF_WIN32_CHECK(is_valid(), CreateFileW);
+  }
 };
 
 class io_completion_worker
@@ -333,6 +361,104 @@ public:
 private:
   worker_service worker_;
   io_completion_service& service_;
+};
+
+class file_channel {
+public:
+  using file_handler =
+      std::function<void(file_channel& channel)>;
+
+public:
+  file_channel(
+      const std::wstring& file_path,
+      io_completion_worker& io_worker,
+      const file_handler& handler) 
+    : io_worker_(io_worker),
+      file_(file_path), 
+      handler_(handler) {}
+
+  void write(const std::uint8_t* data, std::size_t size) {
+    std::unique_lock<std::mutex> lock(write_mutex_);
+
+    std::size_t offset = write_buffer_.size();
+    CALF_CHECK(offset + size < file::max_buffer_size);
+
+    write_buffer_.resize(offset + size);
+    memcpy(write_buffer_.data() + offset, data, size);
+    lock.unlock();
+
+    write();
+  }
+
+  void write(const std::string& data) {
+    write(reinterpret_cast<const std::uint8_t*>(data.c_str()), data.size());
+  }
+
+private: 
+  void write() {
+    if (write_context_.is_pending) {
+      return;
+    }
+
+    std::unique_lock<std::mutex> lock(write_mutex_);
+    if (write_buffer_.empty()) {
+      return;
+    }
+
+    write_context_.buffer.swap(write_buffer_);
+    write_buffer_.clear();
+    lock.unlock();
+
+    file_.write(write_context_, std::bind(&file_channel::write_completed, this));
+  }
+
+  void write_completed() {
+    if (write_context_.type != io_type::write) {
+      closed();
+      return;
+    }
+
+    write();
+  }
+
+  void closed() {
+    if (handler_) {
+      handler_(*this);
+    }
+  }
+
+private:
+  io_completion_worker& io_worker_;
+  file file_;
+  io_context read_context_;
+  io_context write_context_;
+  io_buffer read_buffer_;
+  io_buffer write_buffer_;
+  std::mutex read_mutex_;
+  std::mutex write_mutex_;
+  file_handler handler_;
+};
+
+class file_io_service {
+public:
+  file_io_service()
+    : io_worker_(io_service_) {}
+
+  void run() {
+    io_service_.run_loop();
+  }
+
+  file_channel& create_file(const std::wstring& file_path, const file_channel::file_handler& handler = nullptr) {
+    std::unique_lock<std::mutex> lock(channels_mutex_);
+    channels_.emplace_back(file_path, io_worker_, handler);
+    return channels_.back();
+  }
+  
+private:
+  io_completion_service io_service_;
+  io_completion_worker io_worker_;
+  std::list<file_channel> channels_;
+  std::mutex channels_mutex_;
 };
 
 } // namespace windows
