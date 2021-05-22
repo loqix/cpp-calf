@@ -2,14 +2,18 @@
 
 calf 是一个简单的现代 C++ 模板库，提供一些标准库没有的比较便利的功能封装。
 
-### Usage
+## Usage
 
 采用 Head-only 方式，仅包含头文件即可使用。
 
-### Feature
+## Feature
+
+### 通用
 
 - **calf/singleton.hpp** 单例模式类模板
   - **class SingletonThreadSafe** 线程安全的单例实现
+
+### Windows Win32 API 封装
 
 - **calf/platform/windows/kernel_object.hpp** 内核对象封装
   - **class kernel_object** 内核对象
