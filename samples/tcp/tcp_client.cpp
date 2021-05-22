@@ -10,10 +10,8 @@ public:
 
   void Run() {
     auto& channel = tcp_service_.create_socket(std::bind(&EchoClient::OnRecv, this, std::placeholders::_1));
-    channel.send_buffer("hello");
-    channel.send_buffer("world");
-    channel.connect("127.0.0.1", 4900);
-    channel.send_buffer("nnnnnnnnnn");
+    channel.send_buffer("GET / HTTP/1.1\r\nHost: baidu.com\r\n\r\n");
+    channel.connect(L"127.0.0.1:4900");
 
     thread_.join();
   }

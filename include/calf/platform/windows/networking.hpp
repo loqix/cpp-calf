@@ -93,7 +93,7 @@ public:
     }
   }
 
-  void bind(const std::string& ip_addr, std::uint16_t port) {
+  void bind(const std::wstring& addr) {
     CALF_CHECK(is_valid());
     if (!is_valid()) {
       return;
@@ -101,8 +101,7 @@ public:
 
     SOCKADDR_IN local_addr;
     local_addr.sin_family = AF_INET;
-    local_addr.sin_addr.s_addr = ::inet_addr(ip_addr.c_str());
-    local_addr.sin_port = ::htons(port);
+    set_sockaddr_addr(local_addr, addr);
 
     int result = ::bind(
         socket_, 
@@ -154,22 +153,18 @@ public:
   }
 
   void connect(
-      const std::string& ip_addr, 
-      std::uint16_t port, 
+      const std::wstring& addr, 
       socket_context& context, 
       const io_handler& handler) {
     context.handler = handler;
-    connect(ip_addr, port, context);
+    connect(addr, context);
   }
 
   void connect(
-      const std::string& ip_addr, 
-      std::uint16_t port, 
+      const std::wstring& addr, 
       socket_context& context) {
-    SOCKADDR_IN remote_addr;
-    remote_addr.sin_family = AF_INET;
-    remote_addr.sin_addr.s_addr = ::inet_addr(ip_addr.c_str());
-    remote_addr.sin_port = ::htons(port);
+    context.remote_addr.sin_family = AF_INET;
+    set_sockaddr_addr(context.remote_addr, addr);
 
     LPFN_CONNECTEX connect_ex = get_connect_ex();
     if (connect_ex != nullptr) {
@@ -177,8 +172,8 @@ public:
       DWORD bytes_sent = 0;
       BOOL result = connect_ex(
         socket_,
-        reinterpret_cast<SOCKADDR*>(&remote_addr),
-        sizeof(remote_addr),
+        reinterpret_cast<SOCKADDR*>(&context.remote_addr),
+        sizeof(context.remote_addr),
         context.buffer.empty() ? NULL : context.buffer.data(),
         context.buffer.size(),
         &bytes_sent,
@@ -263,6 +258,28 @@ public:
   }
 
   bool is_valid() { return socket_ != INVALID_SOCKET; }
+
+  std::wstring get_sockaddr_addr(SOCKADDR_IN& sockaddr) {
+    WCHAR address[32] = { 0 };
+    DWORD address_len = 32;
+    int result = ::WSAAddressToStringW(
+        reinterpret_cast<SOCKADDR*>(&sockaddr),
+        sizeof(sockaddr),
+        NULL,
+        address,
+        &address_len);
+    CALF_WSA_CHECK(result == 0, WSAAddressToStringW);
+
+    return std::wstring(address);
+  }
+
+  std::uint16_t get_sockaddr_port(SOCKADDR_IN& sockaddr) {
+    std::uint16_t port = 0;
+    int result = ::WSANtohs(socket_, sockaddr.sin_port, &port);
+    CALF_WSA_CHECK(result == 0, WSANtohs);
+
+    return port;
+  }
 
 private:
   // Override class calf::io_completion_handler method.
@@ -409,6 +426,26 @@ private:
     return get_connect_ex_sockaddrs;
   }
 
+  void set_sockaddr_addr(SOCKADDR_IN& sockaddr, const std::wstring& ip_addr) {
+    INT address_len = sizeof(SOCKADDR_IN);
+    WCHAR address[32] = { 0 };
+    memcpy(&address, ip_addr.c_str(), std::min(static_cast<std::size_t>(32), ip_addr.length()) * sizeof(WCHAR));
+
+    // 这个函数和 inet_ntos 有所区别，端口也在该函数中设置。
+    int result = ::WSAStringToAddressW(
+        address, 
+        sockaddr.sin_family, 
+        NULL, 
+        reinterpret_cast<SOCKADDR*>(&sockaddr), 
+        &address_len);
+    CALF_WSA_CHECK(result == 0, WSAStringToAddressW);
+  }
+
+  void set_sockaddr_port(SOCKADDR_IN& sockaddr, std::uint16_t port) {
+    int result = ::WSAHtons(socket_, port, &sockaddr.sin_port);
+    CALF_WSA_CHECK(result == 0, WSAHtons);
+  }
+
 private:
   SOCKET socket_;
 };
@@ -424,8 +461,8 @@ public:
       handler_(handler),
       connected_flag_(false) {}
 
-  void connect(const std::string& ip_addr, std::uint16_t port) {
-    socket_.bind("0.0.0.0", 0);
+  void connect(const std::wstring& addr) {
+    socket_.bind(L"0.0.0.0");
 
     // 初始连接就可以发送数据了。 
     std::unique_lock<std::mutex> lock(send_mutex_);
@@ -433,11 +470,11 @@ public:
     send_buffer_.clear();
     lock.unlock();
 
-    socket_.connect(ip_addr, port, send_context_, std::bind(&socket_channel::connect_completed, this));
+    socket_.connect(addr, send_context_, std::bind(&socket_channel::connect_completed, this));
   }
 
-  void listen(const std::string& ip_addr, std::uint16_t port) {
-    socket_.bind(ip_addr, port);
+  void listen(const std::wstring& ip_addr) {
+    socket_.bind(ip_addr);
     socket_.listen();
   }
 
@@ -495,12 +532,12 @@ public:
     return recv_context_.type;
   }
 
-  std::string get_remote_addr() {
-    return ::inet_ntoa(recv_context_.remote_addr.sin_addr);
+  std::wstring get_remote_addr() {
+    return socket_.get_sockaddr_addr(recv_context_.remote_addr);
   }
 
   std::uint16_t get_remote_port() {
-    return ::ntohs(recv_context_.remote_addr.sin_port);
+    return socket_.get_sockaddr_port(recv_context_.remote_addr);
   }
 
 private:
