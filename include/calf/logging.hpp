@@ -157,5 +157,6 @@ protected:
 } // namespace calf
 
 #define CALF_LOG(level) calf::logging::log(nullptr, calf::logging::log_level::level, __FILEW__, __LINE__)
+#define CALF_LOG_TARGET(target, level) calf::logging::log(#target, calf::logging::log_level::level, __FILEW__, __LINE__)
 
 #endif // CALF_LOGGING_HPP_
