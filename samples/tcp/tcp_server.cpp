@@ -1,4 +1,5 @@
-#include <calf\platform\windows\networking.hpp>
+#include <calf/platform/windows.hpp>
+#include <calf/platform/windows/networking.hpp>
 
 #include <iostream>
 #include <thread>

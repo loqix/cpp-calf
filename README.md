@@ -1,6 +1,6 @@
-## Calf C++ Template Library
+## Calf Template Library
 
-calf 是一个简单的现代 C++ 模板库，提供一些标准库没有的比较便利的功能封装。
+calf 是一个简单的现代 C++ 模板库轮子，提供一些标准库没有的比较便利的功能封装。
 
 ## Usage
 
@@ -16,7 +16,7 @@ calf 是一个简单的现代 C++ 模板库，提供一些标准库没有的比�
 - **calf/worker_service.hpp** 
   - **class worker_service** 线程任务队列
 
-### Windows Win32 API 封装
+### Windows Win32 功能封装
 
 - **calf/platform/windows/kernel_object.hpp** 内核对象封装
   - **class kernel_object** 内核对象
@@ -39,4 +39,10 @@ calf 是一个简单的现代 C++ 模板库，提供一些标准库没有的比�
   - **class socket_channel** Socket 通信通道。
   - **class tcp_service** 基于完成端口的 TCP 服务封装。
 
+- **calf/platform/windows/debugging.hpp** 调试支持
+  - **#define CALF_WIN32_CHECK** 条件检查宏
+  - **#define CALF_WIN32_ASSERT** 条件断言宏
+
+- **calf/platform/windows/logging.hpp** 日志
+  - **#define CALF_WIN32_LOG** 日志宏
 

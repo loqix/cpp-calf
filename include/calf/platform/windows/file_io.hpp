@@ -2,7 +2,7 @@
 #define CALF_PLATFORM_WINDOWS_FILE_IO_HPP_
 
 #include "win32.hpp"
-#include "win32_debug.hpp"
+#include "debugging.hpp"
 #include "kernel_object.hpp"
 #include "../../worker_service.hpp"
 
@@ -69,14 +69,14 @@ public:
   io_completion_port() { create(); }
 
   void associate(HANDLE file, ULONG_PTR key) {
-    CALF_ASSERT(is_valid());
+    CALF_WIN32_ASSERT(is_valid());
 
     HANDLE port = ::CreateIoCompletionPort(
         file, 
         handle_, 
         key,
         0);
-    CALF_WIN32_CHECK(port == handle_, CreateIoCompletionPort);
+    CALF_WIN32_API_CHECK(port == handle_, CreateIoCompletionPort);
   }
 
   bool wait(
@@ -85,7 +85,7 @@ public:
       LPDWORD bytes_transferred,
       DWORD* err,
       DWORD timeout = INFINITE) {
-    CALF_ASSERT(is_valid());
+    CALF_WIN32_ASSERT(is_valid());
 
     BOOL bret = ::GetQueuedCompletionStatus(
         handle_,
@@ -94,7 +94,7 @@ public:
         overlapped,
         timeout);
 
-    //CALF_WIN32_CHECK(bret != FALSE, GetQueuedCompletionStatus);
+    //CALF_WIN32_API_CHECK(bret != FALSE, GetQueuedCompletionStatus);
     if (bret == FALSE) {
       *err = ::GetLastError();
     }
@@ -105,7 +105,7 @@ public:
       DWORD bytes_transferred,
       ULONG_PTR key, 
       LPOVERLAPPED overlapped) {
-    CALF_ASSERT(is_valid());
+    CALF_WIN32_ASSERT(is_valid());
 
     BOOL bret = ::PostQueuedCompletionStatus(
         handle_, 
@@ -113,13 +113,13 @@ public:
         key, 
         overlapped);
 
-    CALF_WIN32_CHECK(bret != FALSE, PostQueuedCompletionStatus);
+    CALF_WIN32_API_CHECK(bret != FALSE, PostQueuedCompletionStatus);
   }
 
 protected:
   void create() {
     handle_ = ::CreateIoCompletionPort(INVALID_HANDLE_VALUE, NULL, 0, 0);
-    CALF_WIN32_ASSERT(is_valid(), CreateIoCompletionPort);
+    CALF_WIN32_API_ASSERT(is_valid(), CreateIoCompletionPort);
   }
 };
 
@@ -214,7 +214,7 @@ public:
   }
 
   void read(io_context& context) {
-    CALF_ASSERT(is_valid());
+    CALF_WIN32_ASSERT(is_valid());
     
     context.type = io_type::read;
 
@@ -232,7 +232,7 @@ public:
       // 读取成功也由 IOCP 通知。
     } else {
       DWORD err = ::GetLastError();
-      CALF_WIN32_CHECK(err == ERROR_IO_PENDING, ReadFile);
+      CALF_WIN32_API_CHECK(err == ERROR_IO_PENDING, ReadFile);
       if (err = ERROR_IO_PENDING) {
         context.is_pending = true;
       }
@@ -256,7 +256,7 @@ public:
   }
 
   void write(io_context& context) {
-    CALF_ASSERT(is_valid());
+    CALF_WIN32_ASSERT(is_valid());
 
     context.type = io_type::write;
 
@@ -270,7 +270,7 @@ public:
     
     if (bret == FALSE) {
       DWORD err = ::GetLastError();
-      CALF_WIN32_CHECK(err == ERROR_IO_PENDING, WriteFile);
+      CALF_WIN32_API_CHECK(err == ERROR_IO_PENDING, WriteFile);
       if (err == ERROR_IO_PENDING) {
         context.is_pending = true;
       }
@@ -308,7 +308,7 @@ public:
   virtual void io_broken(overlapped_io_context* context, DWORD err) override {
     // 出错误了。
     BOOL bret = ::CancelIo(handle_);
-    CALF_CHECK(bret != FALSE);
+    CALF_WIN32_CHECK(bret != FALSE);
     io_context* ioc = static_cast<io_context*>(context);
     if (ioc != nullptr) {
       ioc->type = io_type::broken;
@@ -330,7 +330,7 @@ private:
         OPEN_ALWAYS,
         FILE_ATTRIBUTE_NORMAL,
         NULL);
-    CALF_WIN32_CHECK(is_valid(), CreateFileW);
+    CALF_WIN32_API_CHECK(is_valid(), CreateFileW);
   }
 };
 
@@ -381,7 +381,7 @@ public:
     std::unique_lock<std::mutex> lock(write_mutex_);
 
     std::size_t offset = write_buffer_.size();
-    CALF_CHECK(offset + size < file::max_buffer_size);
+    CALF_WIN32_CHECK(offset + size < file::max_buffer_size);
 
     write_buffer_.resize(offset + size);
     memcpy(write_buffer_.data() + offset, data, size);

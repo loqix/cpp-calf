@@ -2,7 +2,7 @@
 #define CALF_PLATFORM_WINDOWS_SYSTEM_SERVICES_HPP_
 
 #include "win32.hpp"
-#include "win32_debug.hpp"
+#include "debugging.hpp"
 #include "file_io.hpp"
 
 #include <atomic>
@@ -19,7 +19,7 @@ class waitable_object : public kernel_object {
 public:
   bool wait(DWORD timeout = INFINITE) {
     DWORD result = ::WaitForSingleObject(handle_, timeout);
-    CALF_WIN32_CHECK(result == WAIT_OBJECT_0, WaitForSingleObject);
+    CALF_WIN32_API_CHECK(result == WAIT_OBJECT_0, WaitForSingleObject);
     return result == WAIT_OBJECT_0;
   }
 };
@@ -33,7 +33,7 @@ public:
 private:
   void create(const std::wstring& name, bool auto_reset = false) {
     handle_ = ::CreateEventW(NULL, auto_reset ? TRUE : FALSE, FALSE, name.c_str());
-    CALF_WIN32_CHECK(handle_ != NULL, CreateEventW);
+    CALF_WIN32_API_CHECK(handle_ != NULL, CreateEventW);
   }
 };
 
@@ -73,10 +73,10 @@ public:
       io_context.handler(io_context);
     } else {
       BOOL bret = ::ConnectNamedPipe(handle_, &io_context.overlapped);
-      CALF_CHECK(bret == FALSE); // 异步总是返回 FALSE。
+      CALF_WIN32_CHECK(bret == FALSE); // 异步总是返回 FALSE。
       if (bret == FALSE) {
         DWORD err = ::GetLastError();
-        CALF_WIN32_CHECK(err == ERROR_IO_PENDING || err == ERROR_PIPE_CONNECTED, ConnectNamedPipe);
+        CALF_WIN32_API_CHECK(err == ERROR_IO_PENDING || err == ERROR_PIPE_CONNECTED, ConnectNamedPipe);
         if (err == ERROR_IO_PENDING) {
           io_context.is_pending = true;
         } else if (err == ERROR_PIPE_CONNECTED) {
@@ -101,7 +101,7 @@ public:
 
   virtual void io_broken(overlapped_io_context* context, DWORD err) override {
     // 管道错误，关闭管道
-    CALF_WIN32_CHECK(err == ERROR_BROKEN_PIPE, GetQueuedCompletionStatus);
+    CALF_WIN32_API_CHECK(err == ERROR_BROKEN_PIPE, GetQueuedCompletionStatus);
 
     file::io_broken(context, err);
   }
@@ -119,7 +119,7 @@ protected:
         default_buffer_size,
         default_timeout,
         NULL);
-    CALF_WIN32_CHECK(is_valid(), CreateNamedPipeW);
+    CALF_WIN32_API_CHECK(is_valid(), CreateNamedPipeW);
   }
 
   void open(const std::wstring& pipe_name, bool wait = true) {
@@ -137,7 +137,7 @@ protected:
       DWORD err = ::GetLastError();
       if (err == ERROR_PIPE_BUSY) {
         BOOL bret = ::WaitNamedPipeW(pipe_name.c_str(), default_timeout);
-        CALF_WIN32_CHECK(bret != FALSE, WaitNamedPipeW);
+        CALF_WIN32_API_CHECK(bret != FALSE, WaitNamedPipeW);
         if (bret != FALSE) {
           open(pipe_name, false);
           return;
@@ -145,7 +145,7 @@ protected:
       }
     }
 
-    CALF_WIN32_CHECK(handle_ != INVALID_HANDLE_VALUE, CreateFileW);
+    CALF_WIN32_API_CHECK(handle_ != INVALID_HANDLE_VALUE, CreateFileW);
     // 连接者不需要等待
     if (is_valid()) {
       connected_flag_.store(true, std::memory_order_relaxed);

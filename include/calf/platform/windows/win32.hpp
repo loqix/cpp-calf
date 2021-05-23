@@ -12,17 +12,4 @@
 #define _UNICODE
 #include <Windows.h>
 
-namespace calf {
-namespace platform {
-namespace windows {
-
-
-
-} // namespace windows
-} // namespace platform
-
-using namespace platform::windows;
-
-} // namespace calf
-
 #endif // CALF_PLATFORM_WINDOWS_WIN32_HPP_

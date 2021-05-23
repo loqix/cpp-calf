@@ -1,7 +1,8 @@
 #ifndef CALF_PLATFORM_WINDOWS_NETWORKING_HPP_
 #define CALF_PLATFORM_WINDOWS_NETWORKING_HPP_
 
-#include "win32_debug.hpp"
+#include "win32.hpp"
+#include "debugging.hpp"
 #include "file_io.hpp"
 
 #include <winsock2.h>
@@ -17,27 +18,43 @@
 
 #pragma comment(lib, "Ws2_32.lib")
 
-#define CALF_WSA_CHECK(result, func) calf::platform::windows::wsa_check(result, #func, __FILE__, __LINE__)
-#define CALF_WSA_ASSERT(result, func) calf::platform::windows::wsa_check(result, #func, __FILE__, __LINE__)
-
 namespace calf {
 namespace platform {
 namespace windows {
+namespace debugging {
 
-win32_log& wsa_check(bool expr, const char* func, const char* file, int line) {
-  if (!expr) {
-    int err = ::WSAGetLastError(); 
-    std::string error_format = get_error_format(err);
-    std::cerr << "[" << file << "(" << line << ")] " <<
-        func << " failed with error " << err << ": " << error_format << std::endl;
-    std::cerr << get_trace_stack() << std::endl;
-
-    // 抛出 Windows 结构化异常
-    ::RaiseException(STATUS_ASSERTION_FAILURE, 0, NULL, NULL);
+class wsa_check : public check {
+public:
+  wsa_check(
+      const wchar_t* expr, 
+      const wchar_t* func, 
+      const wchar_t* file, 
+      int line)
+    : check(expr, file, line) {
+    stream_ << L" call " << func << L" failed with error ";
+    DWORD err = ::WSAGetLastError();
+    stream_ << err << L": " << get_error_format(err);
   }
+};
 
-  return global_win32_log;
-}
+class wsa_assert : public assert {
+public:
+  wsa_assert(
+      const wchar_t* expr, 
+      const wchar_t* func, 
+      const wchar_t* file, 
+      int line)
+    : assert(expr, file, line) {
+    stream_ << L" call " << func << L" failed with error ";
+    DWORD err = ::WSAGetLastError();
+    stream_ << err << L": " << get_error_format(err);
+  }
+};
+
+} // namespace windows
+
+#define CALF_WIN32_WSA_CHECK(result, func) if (!(result)) calf::platform::windows::debugging::wsa_check(L#result, L#func, __FILEW__, __LINE__)
+#define CALF_WIN32_WSA_ASSERT(result, func) if (!(result)) calf::platform::windows::debugging::wsa_check(L#result, L#func, __FILEW__, __LINE__)
 
 class winsock {
 public:
@@ -51,7 +68,7 @@ public:
 private:
   void startup() {
     int result = ::WSAStartup(MAKEWORD(2, 2), &wsa_data_);
-    CALF_CHECK(result == 0) << "WSAStartup failed: " << result;
+    CALF_WIN32_CHECK(result == 0) << "WSAStartup failed: " << result;
     has_init_ = result == 0;
   }
 
@@ -94,7 +111,7 @@ public:
   }
 
   void bind(const std::wstring& addr) {
-    CALF_CHECK(is_valid());
+    CALF_WIN32_CHECK(is_valid());
     if (!is_valid()) {
       return;
     }
@@ -107,17 +124,17 @@ public:
         socket_, 
         reinterpret_cast<SOCKADDR*>(&local_addr), 
         sizeof(local_addr));
-    CALF_WSA_CHECK(result != SOCKET_ERROR, bind);
+    CALF_WIN32_WSA_CHECK(result != SOCKET_ERROR, bind);
   }
 
   void listen() {
-    CALF_CHECK(is_valid());
+    CALF_WIN32_CHECK(is_valid());
     if (!is_valid()) {
       return;
     }
 
     int result = ::listen(socket_, SOMAXCONN);
-    CALF_WSA_CHECK(result != SOCKET_ERROR, listen);
+    CALF_WIN32_WSA_CHECK(result != SOCKET_ERROR, listen);
   }
 
   void accept(socket_context& context, socket& accept_socket, const io_handler& handler) {
@@ -143,9 +160,9 @@ public:
           sizeof(SOCKADDR_IN) + 16,
           &bytes_received,
           &context.overlapped);
-      CALF_ASSERT(result == FALSE);
+      CALF_WIN32_ASSERT(result == FALSE);
       int err = ::WSAGetLastError();
-      CALF_WSA_CHECK(err == WSA_IO_PENDING, AcceptEx);
+      CALF_WIN32_WSA_CHECK(err == WSA_IO_PENDING, AcceptEx);
       if (err == WSA_IO_PENDING) {
         context.is_pending = true;
       }
@@ -178,9 +195,9 @@ public:
         context.buffer.size(),
         &bytes_sent,
         &context.overlapped);
-      CALF_ASSERT(result == FALSE);
+      CALF_WIN32_ASSERT(result == FALSE);
       int err = ::WSAGetLastError();
-      CALF_WSA_CHECK(err == WSA_IO_PENDING, ConnectEx);
+      CALF_WIN32_WSA_CHECK(err == WSA_IO_PENDING, ConnectEx);
       if (err == WSA_IO_PENDING) {
         context.is_pending = true;
       }
@@ -209,7 +226,7 @@ public:
     if (result == FALSE) {
     } else {
       int err = ::WSAGetLastError();
-      //CALF_WSA_CHECK(err == WSA_IO_PENDING || err == 0, WSASend);
+      //CALF_WIN32_WSA_CHECK(err == WSA_IO_PENDING || err == 0, WSASend);
       if (err == WSA_IO_PENDING) {
         context.is_pending = true;
       } else {
@@ -245,7 +262,7 @@ public:
     if (result == 0) {
     } else {
       int err = ::WSAGetLastError();
-      CALF_WSA_CHECK(err == WSA_IO_PENDING || err == 0, WSARecv);
+      CALF_WIN32_WSA_CHECK(err == WSA_IO_PENDING || err == 0, WSARecv);
       if (err == WSA_IO_PENDING) {
         context.is_pending = true;
       } else {
@@ -268,7 +285,7 @@ public:
         NULL,
         address,
         &address_len);
-    CALF_WSA_CHECK(result == 0, WSAAddressToStringW);
+    CALF_WIN32_WSA_CHECK(result == 0, WSAAddressToStringW);
 
     return std::wstring(address);
   }
@@ -276,7 +293,7 @@ public:
   std::uint16_t get_sockaddr_port(SOCKADDR_IN& sockaddr) {
     std::uint16_t port = 0;
     int result = ::WSANtohs(socket_, sockaddr.sin_port, &port);
-    CALF_WSA_CHECK(result == 0, WSANtohs);
+    CALF_WIN32_WSA_CHECK(result == 0, WSANtohs);
 
     return port;
   }
@@ -312,7 +329,7 @@ private:
             memcpy(&sc->remote_addr, remote_addr, 
                 std::min(sizeof(sc->remote_addr), static_cast<std::size_t>(remote_addr_size)));
           }
-          CALF_ASSERT(remote_addr != nullptr);
+          CALF_WIN32_ASSERT(remote_addr != nullptr);
         }
         sc->buffer.resize(sc->bytes_transferred);
         break;
@@ -355,13 +372,13 @@ private:
         NULL,
         0,
         WSA_FLAG_OVERLAPPED);
-    CALF_WSA_CHECK(is_valid(), WSASocketW);
+    CALF_WIN32_WSA_CHECK(is_valid(), WSASocketW);
   }
 
   void close() {
     if (is_valid()) {
       int result = ::closesocket(socket_);
-      CALF_WSA_CHECK(result, closesocket);
+      CALF_WIN32_WSA_CHECK(result, closesocket);
       socket_ = INVALID_SOCKET;
     }
   }
@@ -381,7 +398,7 @@ private:
           &bytes,
           NULL,
           NULL);
-      CALF_WSA_CHECK(result != SOCKET_ERROR, WSAIoctl);
+      CALF_WIN32_WSA_CHECK(result != SOCKET_ERROR, WSAIoctl);
     }
     return accept_ex;
   }
@@ -401,7 +418,7 @@ private:
           &bytes,
           NULL,
           NULL);
-      CALF_WSA_CHECK(result != SOCKET_ERROR, WSAIoctl);
+      CALF_WIN32_WSA_CHECK(result != SOCKET_ERROR, WSAIoctl);
     }
     return connect_ex;
   }
@@ -421,7 +438,7 @@ private:
         &bytes,
         NULL,
         NULL);
-      CALF_WSA_CHECK(result != SOCKET_ERROR, WSAIoctl);
+      CALF_WIN32_WSA_CHECK(result != SOCKET_ERROR, WSAIoctl);
     }
     return get_connect_ex_sockaddrs;
   }
@@ -438,12 +455,12 @@ private:
         NULL, 
         reinterpret_cast<SOCKADDR*>(&sockaddr), 
         &address_len);
-    CALF_WSA_CHECK(result == 0, WSAStringToAddressW);
+    CALF_WIN32_WSA_CHECK(result == 0, WSAStringToAddressW);
   }
 
   void set_sockaddr_port(SOCKADDR_IN& sockaddr, std::uint16_t port) {
     int result = ::WSAHtons(socket_, port, &sockaddr.sin_port);
-    CALF_WSA_CHECK(result == 0, WSAHtons);
+    CALF_WIN32_WSA_CHECK(result == 0, WSAHtons);
   }
 
 private:
@@ -485,7 +502,7 @@ public:
     std::unique_lock<std::mutex> lock(send_mutex_);
 
     std::size_t offset = send_buffer_.size();
-    CALF_CHECK(offset + size < socket::max_buffer_size);
+    CALF_WIN32_CHECK(offset + size < socket::max_buffer_size);
 
     send_buffer_.resize(offset + size);
     memcpy(send_buffer_.data() + offset, data, size);
@@ -507,7 +524,7 @@ public:
     if (offset == 0) {
       send_buffer_.swap(buffer);
     } else {
-      CALF_CHECK(offset + buffer.size() < socket::max_buffer_size);
+      CALF_WIN32_CHECK(offset + buffer.size() < socket::max_buffer_size);
 
       send_buffer_.resize(offset + buffer.size());
       memcpy(send_buffer_.data() + offset, buffer.data(), buffer.size());
@@ -612,7 +629,7 @@ private:
     if (offset == 0) {
       recv_buffer_.swap(recv_context_.buffer);
     } else {
-      CALF_CHECK(offset + recv_context_.buffer.size() < socket::max_buffer_size);
+      CALF_WIN32_CHECK(offset + recv_context_.buffer.size() < socket::max_buffer_size);
       recv_buffer_.resize(offset + recv_context_.buffer.size());
       memcpy(
           recv_buffer_.data() + offset, 
