@@ -14,6 +14,8 @@
 #include <functional>
 #include <vector>
 #include <list>
+#include <thread>
+#include <codecvt>
 
 namespace calf {
 namespace platform {
@@ -460,6 +462,35 @@ private:
   std::list<file_channel> channels_;
   std::mutex channels_mutex_;
 };
+
+namespace logging {
+
+class log_file_target 
+  : public log_target {
+public:
+  log_file_target(const std::wstring& file_name) 
+    : thread_(&file_io_service::run, &service_) {
+    channel_ = &(service_.create_file(file_name));
+  }
+
+  void output(const std::wstring& data) override {
+    if (channel_ != nullptr) {
+      channel_->write(convert_.to_bytes(data));
+    }
+  }
+
+  void sync() override {
+
+  }
+
+private:
+  file_channel* channel_;
+  file_io_service service_;
+  std::thread thread_;
+  std::wstring_convert<std::codecvt_utf8_utf16<wchar_t>, wchar_t> convert_;
+};
+
+} // namespace logging
 
 } // namespace windows
 } // namespace platform

@@ -1,5 +1,5 @@
-#ifndef CALF_SINGLE_INSTANCE_H_
-#define CALF_SINGLE_INSTANCE_H_
+#ifndef CALF_SINGLETON_HPP_
+#define CALF_SINGLETON_HPP_
 
 #include <atomic>
 #include <mutex>
@@ -8,9 +8,9 @@ namespace calf {
 
 // 线程安全单例，延迟初始化
 template<typename T>
-class SingleInstanceThreadSafe {
+class singleton {
 public:
-  static T* GetInstance() {
+  static T* instance() {
     // 双重检查锁定模式 DCLP
     // 补充了内存序保障
     T* pt = instance_.load(std::memory_order_acquire);
@@ -25,7 +25,7 @@ public:
     return pt;
   }
 
-  static void ReleaseInstance() {
+  static void release() {
     T* pt = instance_.load(std::memory_order_acquire);
     if (pt != nullptr) {
       std::unique_lock<std::mutex> lock(mutex_);
@@ -42,11 +42,11 @@ private:
 };
 
 template<typename T>
-std::atomic<T*> SingleInstanceThreadSafe<T>::instance_ = nullptr;
+std::atomic<T*> singleton<T>::instance_ = nullptr;
 
 template<typename T>
-std::mutex SingleInstanceThreadSafe<T>::mutex_;
+std::mutex singleton<T>::mutex_;
 
 } // namespace calf
 
-#endif // CALF_SINGLE_INSTANCE_H_
+#endif // CALF_SINGLETON_HPP_

@@ -33,7 +33,7 @@ public:
     : check(expr, file, line) {
     stream_ << L" call " << func << L" failed with error ";
     DWORD err = ::WSAGetLastError();
-    stream_ << err << L": " << get_error_format(err);
+    stream_ << err << L": " << debug::get_error_format(err);
   }
 };
 
@@ -47,7 +47,7 @@ public:
     : assert(expr, file, line) {
     stream_ << L" call " << func << L" failed with error ";
     DWORD err = ::WSAGetLastError();
-    stream_ << err << L": " << get_error_format(err);
+    stream_ << err << L": " << debug::get_error_format(err);
   }
 };
 
