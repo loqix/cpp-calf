@@ -12,6 +12,10 @@
 
 #pragma comment(lib, "Dbghelp.lib")
 
+#ifdef assert
+#undef assert
+#endif
+
 namespace calf {
 namespace platform {
 namespace windows {

@@ -9,6 +9,7 @@
 #include <codecvt>
 #include <map>
 #include <mutex>
+#include <memory>
 
 namespace calf {
 namespace logging {
@@ -55,7 +56,7 @@ public:
 
 class log_manager : public singleton<log_manager> {
 public:
-  log_manager() : default_target_("stderr") {
+  log_manager() : default_target_("stdout") {
     std::unique_lock<std::mutex> lock(mutex_);
     targets_.emplace("stdout", std::make_unique<log_stdout_target>());
     targets_.emplace("stderr", std::make_unique<log_stderr_target>());

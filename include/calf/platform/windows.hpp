@@ -5,6 +5,7 @@
 #include "windows/debugging.hpp"
 #include "windows/file_io.hpp"
 #include "windows/system_services.hpp"
+#include "windows/process.hpp"
 
 namespace calf {
 namespace logging {

@@ -37,8 +37,8 @@ enum struct io_type {
 };
 
 enum struct io_mode {
-  open,
   create,
+  open,
   create_multiple_instance
 };
 
@@ -134,7 +134,7 @@ public:
 
 class io_completion_service {
 public:
-  io_completion_service() : quit_flag_(false) {}
+  io_completion_service() : quit_flag_(ATOMIC_VAR_INIT(false)) {}
 
   void run_loop() {
     DWORD bytes_transferred = 0;
@@ -170,7 +170,6 @@ public:
     iocp_.close();
   }
 
-protected:
   void register_handle(HANDLE handle, io_completion_handler* handler) {
     iocp_.associate(handle, reinterpret_cast<ULONG_PTR>(handler));
   }
@@ -179,9 +178,6 @@ protected:
   io_completion_port iocp_;
   std::mutex mtx_;
   std::atomic_bool quit_flag_;
-
-friend class system_pipe;
-friend class socket;
 };
 
 class file
@@ -348,12 +344,21 @@ public:
     service_.dispatch(this, nullptr);
   }
 
+#ifdef CPP17
   template<typename ...Args>
   decltype(auto) packaged_dispatch(Args&&... args) {
     auto result = worker_.packaged_dispatch(std::forward<Args>(args)...);
     service_.dispatch(this, nullptr);
     return result;
   }
+#else
+  template<typename Fn, typename ...Args, typename Ret = typename std::result_of<Fn(Args...)>::type>
+  typename Ret packaged_dispatch(Fn &&fn, Args &&...args) {
+    auto result = worker_.packaged_dispatch(std::forward<Fn>(fn), std::forward<Args>(args)...);
+    service_.dispatch(this, nullptr);
+    return result;
+  }
+#endif
 
   // Override io_completion_handler
   virtual void io_completed(overlapped_io_context* context) {

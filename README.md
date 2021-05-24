@@ -13,7 +13,7 @@ calf 是一个简单的现代 C++ 模板库，提供一些标准库没有的轮�
 - **calf/singleton.hpp** 单例模式
   - **template class singleton** 线程安全的单例实现
 
-- **calf/worker_service.hpp** 
+- **calf/worker_service.hpp**
   - **class worker_service** 线程任务队列
 
 - **calf/logging** 日志

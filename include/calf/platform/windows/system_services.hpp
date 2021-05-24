@@ -26,14 +26,36 @@ public:
 
 class system_event : public waitable_object {
 public:
-  system_event(const std::wstring& name, bool auto_reset = false) { 
-    create(name, auto_reset);
+  system_event(const std::wstring& name, io_mode mode = io_mode::create, bool auto_reset = false) { 
+    switch(mode) {
+    case io_mode::create:
+      create(name, auto_reset);
+      break;
+    case io_mode::open:
+      open(name);
+      break;
+    }
+  }
+
+  void set() {
+    CALF_WIN32_CHECK(is_valid());
+    ::SetEvent(handle_);
+  }
+
+  void reset() {
+    CALF_WIN32_CHECK(is_valid());
+    ::ResetEvent(handle_);
   }
 
 private:
   void create(const std::wstring& name, bool auto_reset = false) {
     handle_ = ::CreateEventW(NULL, auto_reset ? TRUE : FALSE, FALSE, name.c_str());
     CALF_WIN32_API_CHECK(handle_ != NULL, CreateEventW);
+  }
+
+  void open(const std::wstring& name) {
+    handle_ = ::OpenEventW(NULL, FALSE, name.c_str());
+    CALF_WIN32_API_CHECK(is_valid(), OpenEventW);
   }
 };
 
@@ -42,7 +64,7 @@ class system_pipe
 
 public:
   system_pipe(const std::wstring& pipe_name, io_mode mode)
-    : connected_flag_(false) {
+    : connected_flag_(ATOMIC_VAR_INIT(false)) {
     switch (mode) {
     case io_mode::create:
       create(pipe_name);
