@@ -15,10 +15,10 @@ public:
   kernel_object(HANDLE handle) : handle_(handle) {}
   ~kernel_object() { close(); }
 
-  HANDLE handle() { return handle_; }
-  bool is_null() { return handle_ == NULL; }
-  bool is_invalid() { return handle_ == INVALID_HANDLE_VALUE; }
-  bool is_valid() { return !is_null() && !is_invalid(); }
+  HANDLE handle() const  { return handle_; }
+  bool is_null() const { return handle_ == NULL; }
+  bool is_invalid() const { return handle_ == INVALID_HANDLE_VALUE; }
+  bool is_valid() const { return !is_null() && !is_invalid(); }
 
   void reset(HANDLE handle) {
     close();

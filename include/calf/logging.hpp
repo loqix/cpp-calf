@@ -10,6 +10,8 @@
 #include <map>
 #include <mutex>
 #include <memory>
+#include <cctype>
+#include <algorithm>
 
 namespace calf {
 namespace logging {
@@ -71,6 +73,12 @@ public:
     if (it != targets_.end()) {
       return it->second.get();
     }
+
+    name = default_target_.c_str();
+    it = targets_.find(name);
+    if (it != targets_.end()) {
+      return it->second.get();
+    }
     return nullptr;
   }
 
@@ -94,7 +102,13 @@ public:
   log(const char* target_name, log_level level, const wchar_t* file, int line)
     : target_(nullptr) {
     target_ = log_manager::instance()->get_target(target_name);
-    stream_ << L"[" << file << L"(" << line << L") " << get_level_string(level) << L"] ";
+    stream_ << L"[CALF ";
+    if (target_name != nullptr) {
+      std::string name(target_name);
+      std::transform(name.begin(), name.end(), name.begin(), std::toupper);
+      *this << name.c_str() << L" ";
+    }
+    stream_ << get_level_string(level) << "][" << file << L"(" << line << L")] ";
   }
 
   ~log() {

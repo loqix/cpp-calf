@@ -54,7 +54,7 @@ private:
   }
 
   void open(const std::wstring& name) {
-    handle_ = ::OpenEventW(NULL, FALSE, name.c_str());
+    handle_ = ::OpenEventW(EVENT_MODIFY_STATE, FALSE, name.c_str());
     CALF_WIN32_API_CHECK(is_valid(), OpenEventW);
   }
 };
@@ -211,6 +211,9 @@ public:
   pipe_message_head* head() { return reinterpret_cast<pipe_message_head*>(message_.data()); }
   std::uint8_t* data() { return message_.data() + sizeof(pipe_message_head); }
   io_buffer& buffer() { return message_; }
+  std::string to_string() { return std::string(reinterpret_cast<char*>(data()), head()->size); }
+  std::size_t size() { return head()->size; }
+  int id() { return head()->id; }
 
 private:
   io_buffer message_;
@@ -252,6 +255,8 @@ public:
   }
 
   io_type type() const { return read_context_.type; }
+
+  bool is_valid() const { return pipe_.is_valid(); }
 
 private:
   void connect() {
@@ -397,6 +402,7 @@ public:
 
   void run() {
     io_service_.run_loop();
+    CALF_LOG(info) << "Pipe message service quit.";
   }
 
   pipe_message_channel& create_channel(
@@ -422,6 +428,10 @@ public:
     channels_.remove_if([&channel](const pipe_message_channel& object) {
       return &object == &channel;
     });
+  }
+
+  void quit() {
+    io_service_.quit();
   }
 
 private:

@@ -2,10 +2,12 @@
 #define CALF_PLATFORM_WINDOWS_HPP_
 
 #include "windows/win32.hpp"
+#include "windows/logging.hpp"
 #include "windows/debugging.hpp"
 #include "windows/file_io.hpp"
 #include "windows/system_services.hpp"
 #include "windows/process.hpp"
+#include "windows/thread_message_queue.hpp"
 
 namespace calf {
 namespace logging {

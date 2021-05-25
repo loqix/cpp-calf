@@ -64,7 +64,7 @@ public:
 public:
   LRESULT process(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam) {
     LRESULT lresult = 0;
-    if (static_cast<Base*>(this)->dispatch(      // ÔÊĞíµİ¹éÄ£°åÖØÔØ
+    if (static_cast<Base*>(this)->dispatch(      // å…è®¸é€’å½’æ¨¡æ¿é‡è½½
         hwnd, message, wparam, lparam, lresult)) {
       return lresult;
     }
@@ -75,34 +75,29 @@ public:
 template<typename Base>
 using message_router = basic_message_router<Base>;
 
-struct loop_mode_block {};
-struct loop_mode_non_block {};
 
-template<typename LoopMode>
-class basic_message_loop;
-
-template<>
-class basic_message_loop<loop_mode_block> {
+class thread_message_service {
 public:
-  int polling(HWND hwnd = nullptr) {
+  void run() {
     MSG msg = { 0 };
     BOOL result = FALSE;
-    while(result = ::GetMessageW(&msg, hwnd, 0, 0), result != 0) {
+    while(result = ::GetMessageW(&msg, NULL, 0, 0), result != 0) {
       if (msg.message == WM_QUIT) {
         break;
       }
 
-      // µ±ÊÕµ½ WM_QUIT Ê± result Îª 0£¬ÆäËüÊ±ºòÎª·ÇÁã¡£
-      // Èç¹û hwnd ´íÎóÔò·µ»Ø -1¡£µ«ÕâÀï¼Ù¶¨ hwnd Ã»ÓĞÎÊÌâ¡£
+      // å½“æ”¶åˆ° WM_QUIT æ—¶ result ä¸º 0ï¼Œå…¶å®ƒæ—¶å€™ä¸ºéé›¶ã€‚
+      // å¦‚æœ hwnd é”™è¯¯åˆ™è¿”å› -1ã€‚ä½†è¿™é‡Œå‡å®š hwnd æ²¡æœ‰é—®é¢˜ã€‚
       ::TranslateMessage(&msg);
       ::DispatchMessageW(&msg);
     }
+  }
 
-    return 0;
+public:
+  static void quit() {
+    ::PostQuitMessage(0);
   }
 };
-
-using message_loop = basic_message_loop<loop_mode_block>;
 
 } // namespace windows
 } // namespace platform

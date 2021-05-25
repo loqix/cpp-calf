@@ -19,6 +19,8 @@ public:
     create(file_path, command_line);
   }
 
+  process(HANDLE handle) : kernel_object(handle) {}
+
   void create(const std::wstring& file_path, const std::wstring& command_line = std::wstring()) {
     STARTUPINFOW startup_info;
     memset(&startup_info, 0, sizeof(startup_info));
@@ -57,6 +59,10 @@ public:
     }
   }
 
+  void terminate() {
+    ::TerminateProcess(handle_, 0);
+  }
+
 public:
   static std::wstring get_current_module_directory() {
     WCHAR buffer[MAX_PATH] = { 0 };
@@ -72,6 +78,12 @@ public:
     std::wstring path(buffer, size);
     return std::move(path);
   }
+
+  static process get_current_process() {
+    HANDLE handle = ::GetCurrentProcess();
+    return process(handle);
+  }
+
 };
 
 } // namespace windows

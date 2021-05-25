@@ -96,7 +96,7 @@ public:
         overlapped,
         timeout);
 
-    //CALF_WIN32_API_CHECK(bret != FALSE, GetQueuedCompletionStatus);
+    CALF_WIN32_API_CHECK(bret != FALSE, GetQueuedCompletionStatus);
     if (bret == FALSE) {
       *err = ::GetLastError();
     }
@@ -140,8 +140,8 @@ public:
     DWORD bytes_transferred = 0;
     ULONG_PTR key = NULL;
     LPOVERLAPPED overlapped = NULL;
+    DWORD err = ERROR_SUCCESS;
     while (!quit_flag_.load(std::memory_order_relaxed)) {
-      DWORD err = ERROR_SUCCESS;
       bool completed = iocp_.wait(&overlapped, &key, &bytes_transferred, &err);
       io_completion_handler* handler = reinterpret_cast<io_completion_handler*>(key);
       overlapped_io_context* context = reinterpret_cast<overlapped_io_context*>(overlapped);

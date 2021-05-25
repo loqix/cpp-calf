@@ -1,4 +1,5 @@
-#include <calf/worker_service.hpp>
+#include <calf/platform/windows.hpp>
+
 #include <iostream>
 #include <thread>
 
@@ -11,11 +12,13 @@ public:
 };
 
 int main(int argc, char* argv[]) {
-  calf::worker_service worker;
-  Test test;
-  auto future = worker.packaged_dispatch(&Test::test, &test);
-  std::thread thread(&calf::worker_service::run_loop, &worker);
-  thread.join();
+  calf::log_manager::instance()->set_default_target("stdout");
+  CALF_LOG(info) << "asdf";
+  CALF_LOG(error) << "efda";
+  CALF_LOG(fatal) << "fdas";
+  CALF_LOG_TARGET(m1, info) << "asdf";
+  CALF_LOG_TARGET(m2, error) << "efda";
+  CALF_LOG_TARGET(m3, fatal) << "fdas";
 
   return 0;
 }
