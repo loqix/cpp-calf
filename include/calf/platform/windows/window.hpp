@@ -3,7 +3,7 @@
 
 #include "win32.hpp"
 #include "debugging.hpp"
-#include "thread_message_queue.hpp"
+#include "thread_message.hpp"
 
 #include <dwmapi.h>
 
@@ -18,28 +18,27 @@ namespace calf {
 namespace platform {
 namespace windows {
 
-struct win32_point {
-  win32_point() : x(0), y(0) {}
-  win32_point(int x, int y) : x(x), y(y) {}
+struct point {
+  point() : x(0), y(0) {}
+  point(int x, int y) : x(x), y(y) {}
 
   int x;
   int y;
 };
 
-struct win32_size {
-  win32_size(int w, int h) : w(w), h(h) {}
+struct size {
+  size(int w, int h) : w(w), h(h) {}
 
   int w;
   int h;
 };
 
-struct win32_rect : public win32_point, public win32_size {
-  win32_rect(const RECT& rect) 
-    : win32_point(rect.left, rect.top), 
-      win32_size(rect.right - rect.left, rect.bottom - rect.top) {}
-  win32_rect(int w, int h) : win32_point(0, 0), win32_size(w, h) {}
-  win32_rect(int x, int y, int w, int h)
-    : win32_point(x, y), win32_size(w, h) {}
+struct rect : public point, public size {
+  rect(const RECT& rect) 
+    : point(rect.left, rect.top), 
+      size(rect.right - rect.left, rect.bottom - rect.top) {}
+  rect(int x, int y, int w, int h)
+    : point(x, y), size(w, h) {}
   
   operator RECT() const {
     RECT trc;
@@ -59,29 +58,6 @@ public:
 };
 
 // 显示设备上下文
-class dc_handle {
-public:
-  dc_handle() : hdc_(nullptr) {}
-  dc_handle(HDC hdc) : hdc_(hdc) {}
-
-  void draw(win32_rect rc, const WCHAR* text, int text_len) {
-    RECT target_rc = rc;
-    ::DrawTextW(hdc_, text, text_len, &target_rc, 0);
-  }
-
-  void destroy() {
-    if (hdc_ != nullptr) {
-      ::DeleteDC(hdc_);
-      hdc_ = nullptr;
-    }
-  }
-
-  HDC hdc() const { return hdc_; }
-
-protected:
-  HDC hdc_;
-};
-
 class window_handle {
 public:
   window_handle() : hwnd_(nullptr) {}
@@ -96,7 +72,7 @@ public:
     ::ShowWindow(hwnd_, SW_SHOW);
   }
 
-  void move(win32_rect& rc) {
+  void move(rect& rc) {
     BOOL bret = ::MoveWindow(hwnd_, rc.x, rc.y, rc.w, rc.h, TRUE);
     CALF_WIN32_API_CHECK(bret != FALSE, MoveWindow);
   }
@@ -107,9 +83,9 @@ public:
       MONITORINFO mi;
       mi.cbSize = sizeof(MONITORINFO);
       ::GetMonitorInfoW(current_monitor, &mi);
-      win32_rect monitor_rc(mi.rcWork);
-      win32_rect before_rc(window_rect());
-      win32_rect after_rc((monitor_rc.w - before_rc.w) / 2, (monitor_rc.h - before_rc.h) / 2, before_rc.w, before_rc.h);
+      rect monitor_rc(mi.rcWork);
+      rect before_rc(window_rect());
+      rect after_rc((monitor_rc.w - before_rc.w) / 2, (monitor_rc.h - before_rc.h) / 2, before_rc.w, before_rc.h);
       move(after_rc);
     }
   }
@@ -204,16 +180,16 @@ public:
   //  return ::RegisterRawInputDevices(&rid, 1, sizeof(rid));
   //}
 
-  win32_rect window_rect() const {
+  rect window_rect() const {
     RECT rc;
     ::GetWindowRect(hwnd_, &rc);
-    return win32_rect(rc.left, rc.top, rc.right-rc.left, rc.bottom-rc.top);
+    return rect(rc.left, rc.top, rc.right-rc.left, rc.bottom-rc.top);
   }
 
-  win32_rect client_rect() const {
+  rect client_rect() const {
     RECT rc;
     ::GetClientRect(hwnd_, &rc);
-    return win32_rect(rc.left, rc.top, rc.right-rc.left, rc.bottom-rc.top);
+    return rect(rc.left, rc.top, rc.right-rc.left, rc.bottom-rc.top);
   }
 
   void set_capture() {
@@ -227,7 +203,7 @@ public:
   HWND hwnd() const { return hwnd_; }
 
 protected:
-  void create(win32_rect& rc, HWND parent_wnd, 
+  void create(rect& rc, HWND parent_wnd, 
       const WCHAR* class_name, const WCHAR* title, DWORD style, DWORD ex_style, 
       HMENU id, void* handler) {  // 如果是子窗，允许传入一个 ID。
     hwnd_ = ::CreateWindowExW(ex_style, class_name, title, 
@@ -269,36 +245,6 @@ public:
   system_window_class(const WCHAR* class_name) : window_class(class_name) {}
 };
 
-class dc : public dc_handle {
-public:
-  dc() = default;
-  dc(HDC hdc) : dc_handle(hdc) {}
-  dc(LPCWSTR driver, LPCWSTR device, LPCWSTR port, const DEVMODEW* pdm) {
-    hdc_ = ::CreateDCW(driver, device, port, pdm);
-  }
-  ~dc() {
-    destroy();
-  }
-
-  static HDC create_desktop_dc() {
-    return ::CreateDCW(L"DISPLAY", nullptr, nullptr, nullptr);
-  }
-};
-
-class scoped_dc : public dc_handle {
-public:
-  scoped_dc(window_handle& window) : window_(window) {
-    hdc_ = window.get_dc();
-  }
-  
-  ~scoped_dc() {
-    window_.release_dc(hdc_);
-    hdc_ = nullptr;
-  }
-
-private:
-  window_handle& window_;
-};
 
 // 应用全局窗口类
 template<typename MessageHandler>
@@ -483,8 +429,8 @@ public:
   desktop_window() : window_handle(::GetDesktopWindow()) {}
 };
 
-static const win32_rect default_rect(CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT);
-static const win32_rect null_rect(0, 0, 0, 0);
+static const rect default_rect(CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT);
+static const rect null_rect(0, 0, 0, 0);
 
 // === 系统窗口类 ===
 // 按钮

@@ -1,20 +1,16 @@
 #ifndef CALF_PLATFORM_WINDOWS_STRING_CONVERT_HPP_
 #define CALF_PLATFORM_WINDOWS_STRING_CONVERT_HPP_
 
-#include <calf/platform/windows/win32.hpp>
+#include "win32.hpp"
 #include <string>
 
 namespace calf {
 namespace platform {
 namespace windows {
 
-class string_code_convert {
-public:
-  static size_t from_unicode_to_ansi() {
-    
-  }
+class convert {
+  
 };
-
 
 struct string_code_wide {
   using Char = wchar_t;
@@ -53,6 +49,8 @@ public:
       dst = nullptr;
     }
   }
+
+  string_convert(const std::wstring& data) : string_convert(data.c_str(), data.length()) {}
 
   operator std::string&&() { return std::move(dst_string_); }
 

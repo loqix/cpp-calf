@@ -26,4 +26,12 @@
 #undef assert
 #endif 
 
+#ifdef GetObject 
+#undef GetObject 
+#endif
+
+#ifdef GetString
+#undef GetString
+#endif
+
 #endif // CALF_PLATFORM_WINDOWS_WIN32_HPP_

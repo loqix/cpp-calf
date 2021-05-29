@@ -202,7 +202,7 @@ public:
     memcpy(data(), mem_data, size);
   }
 
-  pipe_message(int id, std::string& str_data) 
+  pipe_message(int id, const std::string& str_data) 
     : pipe_message(
           id, 
           reinterpret_cast<const std::uint8_t*>(str_data.c_str()), 
