@@ -34,4 +34,10 @@
 #undef GetString
 #endif
 
+#define CALF_WIN32_MAIN_ENTRY(main_class) \
+int wWinMain(HINSTANCE, HINSTANCE, LPWSTR, int) {\
+  main_class app;\
+  return app.Run();\
+}
+
 #endif // CALF_PLATFORM_WINDOWS_WIN32_HPP_

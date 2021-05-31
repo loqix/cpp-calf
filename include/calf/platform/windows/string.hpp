@@ -1,16 +1,16 @@
-// Ò»¡¢·â×°ÁË Strsafe.h ÄÚµÄ×Ö·û´®´¦Àíº¯Êı£¬
-// Õâ¸ö¿â¿ÉÒÔ´úÌæ´ó²¿·Ö c ÔËĞĞ¿âµÄ×Ö·û´®º¯Êı¡£
+// ä¸€ã€å°è£…äº† Strsafe.h å†…çš„å­—ç¬¦ä¸²å¤„ç†å‡½æ•°ï¼Œ
+// è¿™ä¸ªåº“å¯ä»¥ä»£æ›¿å¤§éƒ¨åˆ† c è¿è¡Œåº“çš„å­—ç¬¦ä¸²å‡½æ•°ã€‚
 // 
-// windows ÊµÏÖÁËÁ½Ààº¯Êı£¬º¯ÊıÃû·Ö±ğ´øÓĞ Cch ºÍ Cb ×Ö¶Î£¬
-// ·Ö±ğ±íÊ¾ÒÔ×Ö·ûÊı¡¢×Ö½ÚÊıÀ´±íÊ¾³¤¶È¡£
+// windows å®ç°äº†ä¸¤ç±»å‡½æ•°ï¼Œå‡½æ•°ååˆ†åˆ«å¸¦æœ‰ Cch å’Œ Cb å­—æ®µï¼Œ
+// åˆ†åˆ«è¡¨ç¤ºä»¥å­—ç¬¦æ•°ã€å­—èŠ‚æ•°æ¥è¡¨ç¤ºé•¿åº¦ã€‚
 // https://docs.microsoft.com/zh-cn/windows/desktop/api/strsafe/index
 //
-// Windows ÄÚºËÄ£Ê½Ò²ÓĞÀàËÆµÄº¯ÊıÔÚ NtStrsaft.h£¬
-// ·Ö±ğ´øÓĞ Rtl ºÍ RtlUnicode Ç°×º£¬±íÊ¾Ê¹ÓÃ C ·ç¸ñ×Ö·û´®ºÍ UNICODE_STRING ÀàĞÍ²ÎÊı¡£
+// Windows å†…æ ¸æ¨¡å¼ä¹Ÿæœ‰ç±»ä¼¼çš„å‡½æ•°åœ¨ NtStrsaft.hï¼Œ
+// åˆ†åˆ«å¸¦æœ‰ Rtl å’Œ RtlUnicode å‰ç¼€ï¼Œè¡¨ç¤ºä½¿ç”¨ C é£æ ¼å­—ç¬¦ä¸²å’Œ UNICODE_STRING ç±»å‹å‚æ•°ã€‚
 // https://docs.microsoft.com/en-us/windows-hardware/drivers/ddi/content/ntstrsafe/index
 //
-// ¶ş¡¢·â×°ÁË stringapiset.h Í·ÎÄ¼şÖĞµÄ×Ö·û´®¹ú¼Ê»¯º¯Êı¡£
-// ÓÃÓÚ±àÂë×ª»»¡£
+// äºŒã€å°è£…äº† stringapiset.h å¤´æ–‡ä»¶ä¸­çš„å­—ç¬¦ä¸²å›½é™…åŒ–å‡½æ•°ã€‚
+// ç”¨äºç¼–ç è½¬æ¢ã€‚
 //
 #ifndef CALF_PLATFORM_WINDOWS_STRING_HPP_
 #define CALF_PLATFORM_WINDOWS_STRING_HPP_
@@ -50,14 +50,6 @@ public:
 	  CALF_WIN32_API_CHECK(str_bytes != 0, WideCharToMultiByte);
 		buf.resize(str_bytes);
 	  return std::string(buf.data(), buf.size());
-	}
-
-	operator std::wstring&() () {
-		return str_;
-	}
-
-	operator std::wstring&&() () {
-		return std::move(str_);
 	}
 
 private:

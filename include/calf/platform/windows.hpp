@@ -8,7 +8,8 @@
 #include "windows/system_services.hpp"
 #include "windows/process.hpp"
 #include "windows/thread_message.hpp"
-#include "windows/string_convert.hpp"
+#include "windows/string.hpp"
+#include "windows/window.hpp"
 
 namespace calf {
 namespace logging {

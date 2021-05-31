@@ -105,7 +105,7 @@ public:
     stream_ << L"[CALF ";
     if (target_name != nullptr) {
       std::string name(target_name);
-      std::transform(name.begin(), name.end(), name.begin(), std::toupper);
+      std::transform(name.begin(), name.end(), name.begin(), ::toupper);
       *this << name.c_str() << L" ";
     }
     stream_ << get_level_string(level) << "][" << file << L"(" << line << L")] ";
@@ -118,27 +118,20 @@ public:
     }
   }
 
-  log& operator<< (const wchar_t* str) {
-    stream_ << str;
+  template<typename T>
+  log& operator<< (T&& t) {
+    stream_ << t;
     return *this;
   }
 
-  log& operator<< (int n) {
-    stream_ << n;
-    return *this;
-  }
-
-  log& operator<< (const std::wstring& str) {
-    stream_ << str;
-    return *this;
-  }
-
-  log& operator<< (const char* str) {
+  template<>
+  log& operator<< (const char*&& str) {   // VS2013在这里有问题，不能用 const char*。
     stream_ << convert_.from_bytes(str);
     return *this;
   }
 
-  log& operator<< (const std::string& str) {
+  template<>
+  log& operator<< (std::string&& str) {
     stream_ << convert_.from_bytes(str);
     return *this;
   }
