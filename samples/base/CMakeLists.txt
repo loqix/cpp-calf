@@ -7,6 +7,6 @@ include_directories("${CMAKE_CURRENT_LIST_DIR}/../../include")
 set (BASE_SOURCES base.cc)
 
 # Link
-add_compile_options("/source-charset:utf-8")
+#add_compile_options("/source-charset:utf-8")
 
 add_executable(base ${BASE_SOURCES})

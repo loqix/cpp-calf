@@ -9,6 +9,8 @@
 #include <string>
 #include <algorithm>
 
+#include <Shlobj.h>
+
 namespace calf {
 namespace platform {
 namespace windows {
@@ -82,6 +84,12 @@ public:
   static process get_current_process() {
     HANDLE handle = ::GetCurrentProcess();
     return process(handle);
+  }
+
+  static std::wstring get_appdata_directory() {
+    WCHAR wszAppDataPath[MAX_PATH * 2] = { 0 };
+	  ::SHGetSpecialFolderPathW(NULL, wszAppDataPath, CSIDL_APPDATA, TRUE);
+	  return wszAppDataPath;
   }
 
 };

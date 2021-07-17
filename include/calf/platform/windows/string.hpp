@@ -19,13 +19,23 @@
 #include "debugging.hpp"
 #include <string>
 #include <vector>
+#include <cstdint>
 
 namespace calf {
 namespace platform {
 namespace windows {
 
+class string_view {
+public:
+	string_view(const wchar_t* str) : str_(str) {}
+
+protected:
+	const wchar_t* str_;
+};
+
 class string {
 public:
+	string(const std::string& str) { from_string(str); }
 	string(const std::wstring& str) : str_(str) {}
 	string(std::wstring&& str) : str_(str) {}
 
@@ -54,6 +64,22 @@ public:
 
 private:
 	std::wstring str_;
+};
+
+struct encoding_utf8 {
+	using char_t = char;
+};
+
+struct encoding_utf16le {
+	using char_t = wchar_t;
+};
+
+template<typename Encoding = encoding_utf16le>
+class char_string {
+
+
+protected:
+	std::vector<typename Encoding::char_t> str_;
 };
 
 } // namespace windows

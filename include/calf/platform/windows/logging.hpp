@@ -10,14 +10,14 @@ namespace logging {
 
 using namespace calf::logging;
 
-class win32_log : public log {
+class win32_logger : public logger {
 public:
-  win32_log(log_level level, const wchar_t* file, int line)
-    : log(nullptr, level, file, line) {
+  win32_logger(log_level level, const wchar_t* file, int line)
+    : logger(nullptr, level, file, line) {
   }
 };
 
-#define CALF_WIN32_LOG(level) calf::platform::windows::logging::log(calf::platform::windows::logging::log_level::level, __FILEW__, __LINE__)
+#define CALF_WIN32_LOG(level) calf::platform::windows::logging::logger(calf::platform::windows::logging::log_level::level, __FILEW__, __LINE__)
 
 } // namespace logging
 } // namespace windows

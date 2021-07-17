@@ -20,15 +20,15 @@ public:
 public:
   worker_service() : quit_flag_() {}
   ~worker_service() {
-    quit_flag_.store(true, std::memory_order_relaxed);
+    quit_flag_.store(true, std::memory_order_release);
     cv_.notify_all();
   }
 
   void run_loop() {
-    while (!quit_flag_.load(std::memory_order_relaxed)) {
+    while (!quit_flag_.load(std::memory_order_acquire)) {
       std::unique_lock<std::mutex> lock(mutex_);
       cv_.wait(lock, [this]() -> bool {
-        return !task_queue_.empty() || quit_flag_.load(std::memory_order_relaxed);
+        return !task_queue_.empty() || quit_flag_.load(std::memory_order_acquire);
       });
       do_work(lock);
     }
@@ -37,6 +37,11 @@ public:
   void run_one() {
     std::unique_lock<std::mutex> lock(mutex_);
     do_work(lock);
+  }
+
+  void quit() {
+    quit_flag_.store(true, std::memory_order_release);
+    cv_.notify_all();
   }
 
   template<typename Fn, 

@@ -1,18 +1,13 @@
-#include <calf/platform/windows.hpp>
-
 #include <iostream>
-#include <sstream>
-#include <strstream>
-#include <fstream>
-#include <memory>
+#include <string>
+
+#include <unistd.h>
+#include <sys/types.h>
+#include <sys/socket.h>
+#include <sys/epoll.h>
 
 int main(int argc, char* argv[]) {
-  auto manager = calf::logging::log_manager::instance();
-  manager->add_target("file", std::make_unique<calf::log_file_target>(L"default.log"));
-  manager->set_default_target("file");
-
-  CALF_LOG(info) << L"asdf";
-  CALF_ASSERT(false) << L"fdsa";
+  std::cout << "asdf" << std::endl;
 
   return 0;
 }

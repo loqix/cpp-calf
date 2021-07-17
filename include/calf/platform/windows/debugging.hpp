@@ -21,7 +21,7 @@ namespace platform {
 namespace windows {
 namespace debugging {
 
-using calf::platform::windows::logging::win32_log;
+using calf::platform::windows::logging::win32_logger;
 using calf::logging::log_level;
 
 class debug {
@@ -88,10 +88,10 @@ public:
   }
 };
 
-class check : public win32_log {
+class check : public win32_logger {
 public:
   check(const wchar_t* expr, const wchar_t* file, int line)
-    : win32_log(log_level::error, file, line) {
+    : win32_logger(log_level::error, file, line) {
     stream_ << L"check \"" << expr << L"\" failed. ";
   }
 
@@ -99,10 +99,10 @@ public:
   }
 };
 
-class assert : public win32_log {
+class assert : public win32_logger {
 public:
   assert(const wchar_t* expr, const wchar_t* file, int line)
-    : win32_log(log_level::error, file, line) {
+    : win32_logger(log_level::error, file, line) {
     stream_ << L"assert \"" << expr << L"\" failed. ";
   }
 

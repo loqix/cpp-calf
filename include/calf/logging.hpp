@@ -97,9 +97,9 @@ private:
   std::string default_target_;
 };
 
-class log {
+class logger {
 public:
-  log(const char* target_name, log_level level, const wchar_t* file, int line)
+  logger(const char* target_name, log_level level, const wchar_t* file, int line)
     : target_(nullptr) {
     target_ = log_manager::instance()->get_target(target_name);
     stream_ << L"[CALF ";
@@ -111,7 +111,7 @@ public:
     stream_ << get_level_string(level) << "][" << file << L"(" << line << L")] ";
   }
 
-  ~log() {
+  ~logger() {
     stream_ << std::endl;
     if (target_ != nullptr) {
       target_->output(stream_.str());
@@ -119,19 +119,31 @@ public:
   }
 
   template<typename T>
-  log& operator<< (T&& t) {
+  logger& operator<< (T t) {
     stream_ << t;
     return *this;
   }
 
   template<>
-  log& operator<< (const char*&& str) {   // VS2013在这里有问题，不能用 const char*。
+  logger& operator<< (const char* str) {   // VS2013在这里有问题，不能用 const char*。
     stream_ << convert_.from_bytes(str);
     return *this;
   }
 
   template<>
-  log& operator<< (std::string&& str) {
+  logger& operator<< (std::string&& str) {
+    stream_ << convert_.from_bytes(str);
+    return *this;
+  }
+
+  template<>
+  logger& operator<< (const std::string& str) {
+    stream_ << convert_.from_bytes(str);
+    return *this;
+  }
+
+  template<>
+  logger& operator<< (std::string str) {
     stream_ << convert_.from_bytes(str);
     return *this;
   }
@@ -164,7 +176,7 @@ protected:
 } // namespace logging
 } // namespace calf
 
-#define CALF_LOG(level) calf::logging::log(nullptr, calf::logging::log_level::level, __FILEW__, __LINE__)
-#define CALF_LOG_TARGET(target, level) calf::logging::log(#target, calf::logging::log_level::level, __FILEW__, __LINE__)
+#define CALF_LOG(level) calf::logging::logger(nullptr, calf::logging::log_level::level, __FILEW__, __LINE__)
+#define CALF_LOG_TARGET(target, level) calf::logging::logger(#target, calf::logging::log_level::level, __FILEW__, __LINE__)
 
 #endif // CALF_LOGGING_HPP_
