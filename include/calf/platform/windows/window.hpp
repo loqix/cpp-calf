@@ -9,6 +9,7 @@
 
 #include <string>
 #include <map>
+#include <set>
 #include <functional>
 #include <memory>
 #include <mutex>
@@ -455,11 +456,34 @@ private:
   std::vector<std::pair<condition, handler>> condition_handlers_;
 };
 
+struct mouse_state_t {
+};
+
+struct keyboard_state_t {
+};
+
+struct screen_state_t {
+};
+
+struct message_state_t {
+  message_state_t()
+    : result(false) {}
+
+  bool result;
+};
+
+struct window_state_t {
+  mouse_state_t mouse_state;
+  keyboard_state_t keyboard_state;
+  screen_state_t screen_state;
+  message_state_t message_state;
+};
+
 class window
   : public window_message_handler {
 public:
-  using message_handler = std::function<bool(UINT, WPARAM, LPARAM, LRESULT&)>;
-  using message_handler_map = std::map<UINT, message_handler>;
+  using window_handler = std::function<void(window_state_t&)>;
+  using window_handler_map = std::map<std::string, std::list<window_handler>>;
 
 public:
   window(const ui_rect& rc = default_rect, const window_handle& parent = desktop_window_handle) {
@@ -469,14 +493,41 @@ public:
     window_.create(rc, parent, window_class_, this);
   }
 
-  // Override class window_message_handler.
-  bool process(UINT msg, WPARAM wparam, LPARAM lparam, LRESULT& lresult) override {
-    
+  void register_handler(const std::string& name, const window_handler& handler) {
+
   }
 
-private:
+  // Override class window_message_handler.
+  bool process(UINT msg, WPARAM wparam, LPARAM lparam, LRESULT& lresult) override {
+    const char* name = nullptr;
+
+    switch(msg) {
+    case WM_CREATE:
+      name = "create";
+      break;
+    case WM_DESTROY:
+      name = "destroy";
+      break;
+    default:
+      name = "unknown";
+      break;
+    }
+
+    auto map_it = window_handler_map_.find(name);
+    if (map_it != window_handler_map_.end()) {
+      for (auto& handler_it : map_it->second) {
+        handler_it(window_state_);
+        if (window_state_.message_state.result) {
+          break;
+        }
+      }
+    }
+  }
+
   overlapped_window window_;
-  message_handler_map handler_map_;
+  window_state_t window_state_;
+
+  window_handler_map window_handler_map_;
 
 private:
   static application_window_class window_class_;
