@@ -75,7 +75,6 @@ public:
 template<typename Base>
 using message_router = basic_message_router<Base>;
 
-
 class thread_message_service {
 public:
   void run() {

@@ -11,6 +11,7 @@
 #include <map>
 #include <functional>
 #include <memory>
+#include <mutex>
 
 namespace calf {
 namespace platform {
@@ -230,7 +231,7 @@ class window_message_handler {
 public:
   virtual ~window_message_handler() {}
 
-  virtual bool dispatch_message(UINT msg, WPARAM wparam, LPARAM lparam, LRESULT& lresult) = 0;
+  virtual bool process(UINT msg, WPARAM wparam, LPARAM lparam, LRESULT& lresult) = 0;
 };
 
 // 窗口类
@@ -238,7 +239,8 @@ public:
 class window_class {
 public:
   window_class()  {}
-  window_class(const WCHAR* class_name) : class_name_(class_name) {}
+  window_class(const std::wstring& class_name) : class_name_(class_name) {}
+  virtual ~window_class() {}
 
   const wchar_t* class_name() const { return class_name_.c_str(); }
 
@@ -248,18 +250,28 @@ protected:
 
 class system_window_class : public window_class {
 public:
-  system_window_class(const WCHAR* class_name) : window_class(class_name) {}
+  system_window_class(const std::wstring& class_name) : window_class(class_name) {}
 };
 
-
-// 应用全局窗口类
 class application_window_class : public window_class {
 public: 
-  application_window_class(const WCHAR* class_name) : window_class(class_name) {
-    register_class();
+  application_window_class() {}
+
+  application_window_class(const std::wstring& class_name) {
+    register_class(class_name);
   }
 
-  bool register_class() {
+  ~application_window_class() {
+    unregister_class();
+  }
+
+  bool register_class(const std::wstring& class_name) {
+    if (class_name.empty()) {
+      return false;
+    }
+
+    class_name_ = class_name;
+
     WNDCLASSEXW wcex = { 0 };
     wcex.cbSize = sizeof(wcex);
     wcex.style = CS_HREDRAW | CS_VREDRAW;   // 大小改变时通知重绘。
@@ -269,7 +281,7 @@ public:
     wcex.hInstance = ::GetModuleHandleW(nullptr);
     wcex.hIcon = ::LoadIconW(nullptr, IDI_APPLICATION);
     wcex.hCursor = ::LoadCursorW(nullptr, IDC_ARROW);
-    wcex.hbrBackground = (HBRUSH)(COLOR_WINDOW+1);  // 默认背景色
+    wcex.hbrBackground = (HBRUSH)(COLOR_WINDOW + 1);  // 默认背景色
     wcex.lpszMenuName = nullptr;
     wcex.lpszClassName = class_name_.c_str();
     wcex.hIconSm = nullptr;
@@ -280,6 +292,10 @@ public:
   }
 
   void unregister_class() {
+    if (class_name_.empty()) {
+      return;
+    }
+
     BOOL result = ::UnregisterClassW(class_name_.c_str(), ::GetModuleHandleW(nullptr));
     CALF_WIN32_API_CHECK(result != FALSE, UnregisterClassW);
   }
@@ -299,7 +315,7 @@ private:
 
     if (handler != nullptr) {
       LRESULT result = 0;
-      bool has_result = handler->dispatch_message(msg, wparam, lparam, result);
+      bool has_result = handler->process(msg, wparam, lparam, result);
       if (has_result) {
         return result;
       }
@@ -316,17 +332,12 @@ static const system_window_class edit_class(WC_EDITW);
 static const ui_rect default_rect(CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT);
 static const ui_rect null_rect(0, 0, 0, 0);
 
-class base_window : public window_handle {
-public:
-  ~base_window() {
-    destroy();
-  }
-};
-
 // 窗口基础类，分离了窗口属性特性萃取，窗口类和消息处理。
 template<typename WindowTraits>
-class basic_window : public base_window {
+class basic_window : public window_handle {
 public:
+  basic_window() {}
+
   basic_window(
       ui_rect rc, 
       const window_handle& parent, 
@@ -342,6 +353,26 @@ public:
         WindowTraits::ex_style(),
         NULL, 
         reinterpret_cast<void*>(handler));
+  }
+
+  void create(
+      const ui_rect& rc, 
+      const window_handle& parent, 
+      const window_class& wc,
+      window_message_handler* handler) {
+    create(
+        rc, 
+        parent.hwnd(), 
+        wc.class_name(), 
+        L"", 
+        WindowTraits::style(), 
+        WindowTraits::ex_style(),
+        NULL, 
+        reinterpret_cast<void*>(handler));
+  }
+
+  ~basic_window() {
+    destroy();
   }
 };
 
@@ -397,7 +428,7 @@ public:
   }
 
   // Override class window_message_handler methods.
-  virtual bool dispatch_message(
+  virtual bool process(
       UINT msg, 
       WPARAM wparam, 
       LPARAM lparam, 
@@ -422,6 +453,34 @@ public:
 private:
   std::map<UINT, handler> handlers_;
   std::vector<std::pair<condition, handler>> condition_handlers_;
+};
+
+class window
+  : public window_message_handler {
+public:
+  using message_handler = std::function<bool(UINT, WPARAM, LPARAM, LRESULT&)>;
+  using message_handler_map = std::map<UINT, message_handler>;
+
+public:
+  window(const ui_rect& rc = default_rect, const window_handle& parent = desktop_window_handle) {
+    std::call_once(class_init_flag_, [this]() {
+      window_class_.register_class(L"CalfWindowClass");
+    });
+    window_.create(rc, parent, window_class_, this);
+  }
+
+  // Override class window_message_handler.
+  bool process(UINT msg, WPARAM wparam, LPARAM lparam, LRESULT& lresult) override {
+    
+  }
+
+private:
+  overlapped_window window_;
+  message_handler_map handler_map_;
+
+private:
+  static application_window_class window_class_;
+  static std::once_flag class_init_flag_;
 };
 
 } // namespace windows
