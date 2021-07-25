@@ -24,7 +24,7 @@ namespace windows {
 struct overlapped_io_context;
 
 using io_handler = std::function<void(overlapped_io_context&)>;
-using io_buffer = std::vector<std::uint8_t>;
+using io_buffer = std::vector<uint8_t>;
 
 enum struct io_type {
   unknown,

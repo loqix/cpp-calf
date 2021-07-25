@@ -56,3 +56,10 @@ calf 是一个简单的现代 C++ 模板库，提供一些标准库没有的轮�
 - **calf/platform/windows/logging.hpp** 日志
   - **#define CALF_WIN32_LOG** 日志宏
 
+### Linux 特性封装
+
+- **calf/platform/linux/file_io.hpp** 文件 IO
+  - **class io_multiplexing_epoll** IO 多路复用
+
+- **calf/platform/linux/networking.hpp** 网络接口
+  - **class socket**
