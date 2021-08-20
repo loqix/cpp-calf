@@ -2,6 +2,7 @@
 #define CALF_PLATFORM_WINDOWS_FILE_IO_HPP_
 
 #include "win32.hpp"
+#include "string.hpp"
 #include "debugging.hpp"
 #include "kernel_object.hpp"
 #include "../../worker_service.hpp"
@@ -15,7 +16,6 @@
 #include <vector>
 #include <list>
 #include <thread>
-#include <codecvt>
 
 namespace calf {
 namespace platform {
@@ -231,7 +231,7 @@ public:
     } else {
       DWORD err = ::GetLastError();
       CALF_WIN32_API_CHECK(err == ERROR_IO_PENDING, ReadFile);
-      if (err = ERROR_IO_PENDING) {
+      if (err == ERROR_IO_PENDING) {
         context.is_pending = true;
       }
     }
@@ -480,7 +480,7 @@ public:
 
   void output(const std::wstring& data) override {
     if (channel_ != nullptr) {
-      channel_->write(convert_.to_bytes(data));
+      channel_->write(string(data).to_string());
     }
   }
 
@@ -492,7 +492,6 @@ private:
   file_channel* channel_;
   file_io_service service_;
   std::thread thread_;
-  std::wstring_convert<std::codecvt_utf8_utf16<wchar_t>, wchar_t> convert_;
 };
 
 } // namespace logging

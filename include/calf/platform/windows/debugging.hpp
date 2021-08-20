@@ -2,6 +2,7 @@
 #define CALF_PLATFORM_WINDOWS_DEBUGGING_HPP_
 
 #include "win32.hpp"
+#include "string.hpp"
 #include "logging.hpp"
 
 #include "DbgHelp.h"
@@ -45,7 +46,7 @@ public:
     return std::move(result);
   }
 
-  static std::string get_trace_stack() {
+  static std::wstring get_trace_stack() {
     static const int MAX_STACK_FRAMES = 100;
     
     void *pStack[MAX_STACK_FRAMES];
@@ -79,7 +80,7 @@ public:
         break;
       }
     }
-    return oss.str();
+    return string(oss.str()).to_wstring();
   }
 
   static void throw_exception() {

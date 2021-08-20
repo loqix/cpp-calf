@@ -1,5 +1,13 @@
+#pragma once
+
 #ifndef CALF_PLATFORM_WINDOWS_WINDOW_HPP_
 #define CALF_PLATFORM_WINDOWS_WINDOW_HPP_
+
+//
+// CALF TEMPLATE LIBRARY
+//
+// Windows 窗口和窗口资源封装
+//
 
 #include "win32.hpp"
 #include "debugging.hpp"
@@ -50,6 +58,159 @@ struct ui_rect : public ui_point, public ui_size {
   }
 };
 
+class window_message_handler {
+public:
+  virtual bool process(UINT msg, WPARAM wparam, LPARAM lparam, LRESULT& lresult) = 0;
+};
+
+// Windows 经典窗口菜单
+// 这里实现的是动态创建，也可以采用资源文件创建。
+class menu_handle {
+public:
+  menu_handle()
+    : hmenu_(NULL) {}
+
+  void attach(HMENU hmenu) {
+    destroy();
+
+    hmenu_ = hmenu;
+  }
+
+  HMENU detach() {
+    HMENU hmenu = hmenu_;
+    hmenu_ = NULL;
+    return hmenu;
+  }
+
+  void insert(const std::wstring& text, menu_handle&& sub_menu) {
+    MENUITEMINFOW mii;
+    memset(&mii, 0, sizeof(mii));
+    mii.cbSize = sizeof(mii);
+    mii.fMask = MIIM_STRING | MIIM_DATA | MIIM_SUBMENU;
+    mii.fType = MFT_STRING;
+    mii.fState = MFS_ENABLED;
+    mii.hSubMenu = sub_menu.detach(); // 关联后不需要销毁
+    mii.dwTypeData = const_cast<LPWSTR>(text.c_str());
+    mii.cch = static_cast<UINT>(text.length());
+    ::InsertMenuItemW(hmenu_, item_count(), TRUE, &mii);
+  }
+
+  void insert(const std::wstring& text, int pos) {
+    MENUITEMINFOW mii;
+    memset(&mii, 0, sizeof(mii));
+    mii.cbSize = sizeof(mii);
+    mii.fMask = MIIM_STRING | MIIM_DATA;
+    mii.fType = MFT_STRING;
+    mii.fState = MFS_ENABLED;
+    mii.dwItemData = NULL;
+    mii.dwTypeData = const_cast<LPWSTR>(text.c_str());
+    mii.cch = static_cast<UINT>(text.length());
+    ::InsertMenuItemW(hmenu_, pos, TRUE, &mii);
+  }
+
+  void insert(const std::wstring& text, int pos, int menu_id) {
+    MENUITEMINFOW mii;
+    memset(&mii, 0, sizeof(mii));
+    mii.cbSize = sizeof(mii);
+    mii.fMask = MIIM_STRING | MIIM_DATA | MIIM_ID;
+    mii.fType = MFT_STRING;
+    mii.fState = MFS_ENABLED;
+    mii.dwItemData = NULL;
+    mii.wID = menu_id;
+    mii.dwTypeData = const_cast<LPWSTR>(text.c_str());
+    mii.cch = static_cast<UINT>(text.length());
+    ::InsertMenuItemW(hmenu_, pos, TRUE, &mii);
+  }
+
+  int item_count() {
+    return ::GetMenuItemCount(hmenu_);
+  }
+
+  HMENU hmenu() { return hmenu_; }
+
+protected:
+  void destroy() {
+    // 仅在没有窗口拥有该菜单时，才需要销毁
+    if (hmenu_ != NULL) {
+      ::DestroyMenu(hmenu_);
+      hmenu_ = NULL;
+    }
+  }
+
+protected:
+  HMENU hmenu_; // Root menu.
+};
+
+// 子菜单
+class popup_menu 
+  : public menu_handle, 
+    public window_message_handler {
+public:
+  using menu_handler = std::function<void()>;
+
+public:
+  popup_menu() {
+    create();
+  }
+
+  ~popup_menu() {
+    destroy();
+  }
+
+  void insert(const std::wstring& text, menu_handler& handler) {
+    // 要使用 handler，需要让系统处理 WM_MENUCOMMAND 消息，而不是 WM_COMMAND 消息，
+    // 这样可以拿到点击的菜单句柄。
+    MENUINFO mi;
+    memset(&mi, 0, sizeof(mi));
+    mi.cbSize = sizeof(mi);
+    BOOL bresult = ::GetMenuInfo(hmenu_, &mi);
+    if (bresult) {
+      mi.fMask = MIM_STYLE | MIM_MENUDATA;
+      mi.dwStyle |= MNS_NOTIFYBYPOS;
+      mi.dwMenuData = reinterpret_cast<ULONG_PTR>(static_cast<window_message_handler*>(this));
+      bresult = ::SetMenuInfo(hmenu_, &mi);
+    }
+
+    int pos = __super::item_count();
+    handler_map_.emplace(pos, std::move(handler));
+    __super::insert(text, pos);
+  }
+
+private:
+  void create() {
+    hmenu_ = ::CreatePopupMenu();
+    MENUINFO mi;
+    memset(&mi, 0, sizeof(mi));
+    mi.cbSize = sizeof(mi);
+    BOOL bresult = ::GetMenuInfo(hmenu_, &mi);
+    if (bresult != FALSE) {
+
+    }
+  }
+
+private:
+  std::map<int, menu_handler> handler_map_;
+};
+
+// 根菜单
+class menu
+  : public menu_handle {
+public:
+  menu() {
+    create();
+  }
+
+  ~menu() {
+    destroy();
+  }
+
+private:
+  void create() {
+    // 创建根菜单
+    hmenu_ = ::CreateMenu();
+  }
+};
+
 // 
 template<DWORD t_style, DWORD t_ex_style>
 class window_traits {
@@ -58,7 +219,7 @@ public:
   static DWORD ex_style() { return t_ex_style; }
 };
 
-// 
+// Handle 
 class window_handle {
 public:
   window_handle() : hwnd_(nullptr) {}
@@ -137,6 +298,11 @@ public:
     ::InvalidateRect(hwnd_, NULL, TRUE);
   }
 
+  void set_hmenu(menu_handle& menu) {
+    BOOL bresult = ::SetMenu(hwnd_, menu.detach());
+    CALF_WIN32_API_CHECK(bresult != FALSE, SetMenu);
+  }
+
   HDC get_dc() {
     return ::GetDC(hwnd_);
   }
@@ -201,8 +367,8 @@ public:
   HWND hwnd() const { return hwnd_; }
 
 protected:
-  void create(
-      ui_rect& rc, 
+  void create_window(
+      const ui_rect& rc, 
       HWND parent_wnd, 
       const WCHAR* class_name, 
       const WCHAR* title, 
@@ -217,7 +383,7 @@ protected:
     CALF_WIN32_API_CHECK(hwnd_ != NULL, CreateWindowExW);
   }
 
-  void destroy() {
+  void destroy_window() {
     if (valid()) {
       ::DestroyWindow(hwnd_);
     }
@@ -226,13 +392,6 @@ protected:
 
 protected:
   HWND hwnd_;
-};
-
-class window_message_handler {
-public:
-  virtual ~window_message_handler() {}
-
-  virtual bool process(UINT msg, WPARAM wparam, LPARAM lparam, LRESULT& lresult) = 0;
 };
 
 // 窗口类
@@ -314,6 +473,14 @@ private:
       handler = reinterpret_cast<window_message_handler*>(::GetWindowLongPtrW(hwnd, GWLP_USERDATA));
     }
 
+    // 处理窗口菜单事件
+    if (msg == WM_COMMAND) {
+      if (HIWORD(wparam) == 0) {  // 0 为 menu
+        MENUITEMINFOW mii;
+        memset(&mii, 0, sizeof(mii));
+      }
+    }
+
     if (handler != nullptr) {
       LRESULT result = 0;
       bool has_result = handler->process(msg, wparam, lparam, result);
@@ -345,23 +512,16 @@ public:
       const WCHAR* title, 
       const window_class& wc,
       window_message_handler* handler) {
-    create(
-        rc, 
-        parent.hwnd(), 
-        wc.class_name(), 
-        title, 
-        WindowTraits::style(), 
-        WindowTraits::ex_style(),
-        NULL, 
-        reinterpret_cast<void*>(handler));
+    create(rc, parent, title, wc, handler);
   }
 
   void create(
       const ui_rect& rc, 
       const window_handle& parent, 
+      const WCHAR* title, 
       const window_class& wc,
       window_message_handler* handler) {
-    create(
+    create_window(
         rc, 
         parent.hwnd(), 
         wc.class_name(), 
@@ -372,8 +532,19 @@ public:
         reinterpret_cast<void*>(handler));
   }
 
+  void attach(HWND hwnd) {
+    destroy_window();
+    hwnd_ = hwnd;
+  }
+
+  HWND detach() {
+    HWND hwnd = hwnd_;
+    hwnd_ = NULL;
+    return hwnd;
+  }
+
   ~basic_window() {
-    destroy();
+    destroy_window();
   }
 };
 
@@ -480,21 +651,36 @@ struct window_state_t {
 };
 
 class window
-  : public window_message_handler {
+  : public overlapped_window,
+    public window_message_handler {
 public:
   using window_handler = std::function<void(window_state_t&)>;
-  using window_handler_map = std::map<std::string, std::list<window_handler>>;
+  using window_handler_list = std::list<window_handler>;
+  using window_handler_map = std::map<std::string, window_handler_list>;
 
 public:
   window(const ui_rect& rc = default_rect, const window_handle& parent = desktop_window_handle) {
+    static application_window_class window_class_;
+    static std::once_flag class_init_flag_;
+
     std::call_once(class_init_flag_, [this]() {
       window_class_.register_class(L"CalfWindowClass");
     });
-    window_.create(rc, parent, window_class_, this);
+    overlapped_window::create(rc, parent, L"", window_class_, this);
   }
 
-  void register_handler(const std::string& name, const window_handler& handler) {
+  void listen(const std::string& name, const window_handler& handler) {
+    auto map_it = window_handler_map_.find(name);
+    if (map_it == window_handler_map_.end()) {
+      auto res = window_handler_map_.emplace(name, window_handler_list());
+      if (res.second) {
+        map_it = res.first;
+      }
+    }
 
+    if (map_it != window_handler_map_.end()) {
+      map_it->second.emplace_back(handler);
+    }
   }
 
   // Override class window_message_handler.
@@ -507,6 +693,9 @@ public:
       break;
     case WM_DESTROY:
       name = "destroy";
+      break;
+    case WM_COMMAND:
+      name = "command";
       break;
     default:
       name = "unknown";
@@ -522,16 +711,14 @@ public:
         }
       }
     }
+
+    return false;
   }
 
-  overlapped_window window_;
+private:
   window_state_t window_state_;
 
   window_handler_map window_handler_map_;
-
-private:
-  static application_window_class window_class_;
-  static std::once_flag class_init_flag_;
 };
 
 } // namespace windows

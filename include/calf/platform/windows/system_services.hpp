@@ -231,7 +231,7 @@ public:
       io_mode mode, 
       io_completion_service& io_service,
       io_completion_worker& io_worker,
-      message_handler handler) 
+      const message_handler& handler) 
     : io_worker_(io_worker),
       pipe_(pipe_name, mode, io_service),
       handler_(handler) {}
@@ -258,7 +258,6 @@ public:
 
   bool is_valid() const { return pipe_.is_valid(); }
 
-private:
   void connect() {
     pipe_.connect(std::ref(read_context_), std::bind(&pipe_message_channel::connect_completed, this));
   }

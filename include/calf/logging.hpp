@@ -6,7 +6,6 @@
 #include <sstream>
 #include <string>
 #include <iostream>
-#include <codecvt>
 #include <map>
 #include <mutex>
 #include <memory>
@@ -105,7 +104,9 @@ public:
     stream_ << L"[CALF ";
     if (target_name != nullptr) {
       std::string name(target_name);
-      std::transform(name.begin(), name.end(), name.begin(), ::toupper);
+      std::transform(name.begin(), name.end(), name.begin(), [](char in) -> char {
+        return static_cast<char>(::toupper(static_cast<int>(in)));
+      });
       *this << name.c_str() << L" ";
     }
     stream_ << get_level_string(level) << "][" << file << L"(" << line << L")] ";
@@ -121,30 +122,6 @@ public:
   template<typename T>
   logger& operator<< (T t) {
     stream_ << t;
-    return *this;
-  }
-
-  template<>
-  logger& operator<< (const char* str) {   // VS2013在这里有问题，不能用 const char*。
-    stream_ << convert_.from_bytes(str);
-    return *this;
-  }
-
-  template<>
-  logger& operator<< (std::string&& str) {
-    stream_ << convert_.from_bytes(str);
-    return *this;
-  }
-
-  template<>
-  logger& operator<< (const std::string& str) {
-    stream_ << convert_.from_bytes(str);
-    return *this;
-  }
-
-  template<>
-  logger& operator<< (std::string str) {
-    stream_ << convert_.from_bytes(str);
     return *this;
   }
 
@@ -170,7 +147,6 @@ private:
 protected:
   log_target* target_;
   std::wstringstream stream_;
-  std::wstring_convert<std::codecvt_utf8_utf16<wchar_t>, wchar_t> convert_;
 };
 
 } // namespace logging

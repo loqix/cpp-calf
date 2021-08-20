@@ -9,14 +9,14 @@ class EchoClient {
 public:
   EchoClient()
     : pipe_service_(
-          L"\\\\.\\pipe\\echo_server", 
+          L"\\\\.\\pipe\\nd101ppt", 
           calf::io_mode::open),
       thread_(&calf::pipe_message_service::run, &pipe_service_) {}
 
   void Run() {
     auto& channel = pipe_service_.create_channel(
       std::bind(&EchoClient::MessageHandler, this, std::placeholders::_1));
-    auto message = std::make_unique<calf::pipe_message>(0, std::string("test"));
+    auto message = std::make_unique<calf::pipe_message>(1, std::string("{\"methodId\": 1, \"methodName\": \"getUserInfo\"}"));
     channel.send_message(std::move(message));
     thread_.join();
   }
