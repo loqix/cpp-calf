@@ -70,26 +70,14 @@ public:
   menu_handle()
     : hmenu_(NULL) {}
 
-  void attach(HMENU hmenu) {
-    destroy();
-
-    hmenu_ = hmenu;
-  }
-
-  HMENU detach() {
-    HMENU hmenu = hmenu_;
-    hmenu_ = NULL;
-    return hmenu;
-  }
-
-  void insert(const std::wstring& text, menu_handle&& sub_menu) {
+  void insert(const std::wstring& text, const menu_handle& sub_menu) {
     MENUITEMINFOW mii;
     memset(&mii, 0, sizeof(mii));
     mii.cbSize = sizeof(mii);
     mii.fMask = MIIM_STRING | MIIM_DATA | MIIM_SUBMENU;
     mii.fType = MFT_STRING;
     mii.fState = MFS_ENABLED;
-    mii.hSubMenu = sub_menu.detach(); // 关联后不需要销毁
+    mii.hSubMenu = sub_menu.hmenu(); // 关联后不需要销毁
     mii.dwTypeData = const_cast<LPWSTR>(text.c_str());
     mii.cch = static_cast<UINT>(text.length());
     ::InsertMenuItemW(hmenu_, item_count(), TRUE, &mii);
@@ -122,17 +110,17 @@ public:
     ::InsertMenuItemW(hmenu_, pos, TRUE, &mii);
   }
 
-  int item_count() {
+  int item_count() const {
     return ::GetMenuItemCount(hmenu_);
   }
 
-  HMENU hmenu() { return hmenu_; }
+  HMENU hmenu() const { return hmenu_; }
 
 protected:
   void destroy() {
     // 仅在没有窗口拥有该菜单时，才需要销毁
     if (hmenu_ != NULL) {
-      ::DestroyMenu(hmenu_);
+      //::DestroyMenu(hmenu_);
       hmenu_ = NULL;
     }
   }
@@ -157,12 +145,34 @@ public:
     destroy();
   }
 
-  void insert(const std::wstring& text, menu_handler& handler) {
-    // 要使用 handler，需要让系统处理 WM_MENUCOMMAND 消息，而不是 WM_COMMAND 消息，
-    // 这样可以拿到点击的菜单句柄。
+  void insert(const std::wstring& text, menu_handler&& handler) {
+    int pos = __super::item_count();
+    handler_map_.emplace(pos, std::move(handler));
+    __super::insert(text, pos);
+  }
+
+  // Override window_message_handler methods.
+  virtual bool process(UINT msg, WPARAM wparam, LPARAM lparam, LRESULT& lresult) override {
+    int index = LOWORD(wparam);
+    auto handler_it = handler_map_.find(index);
+    if (handler_it != handler_map_.end()) {
+      handler_it->second();
+      lresult = 0;
+      return true;
+    }
+
+    return false;
+  }
+
+private:
+  void create() {
+    hmenu_ = ::CreatePopupMenu();
+
+    // 绑定 handler 供窗口类回调。
     MENUINFO mi;
     memset(&mi, 0, sizeof(mi));
     mi.cbSize = sizeof(mi);
+    mi.fMask = MIM_STYLE;
     BOOL bresult = ::GetMenuInfo(hmenu_, &mi);
     if (bresult) {
       mi.fMask = MIM_STYLE | MIM_MENUDATA;
@@ -171,21 +181,6 @@ public:
       bresult = ::SetMenuInfo(hmenu_, &mi);
     }
 
-    int pos = __super::item_count();
-    handler_map_.emplace(pos, std::move(handler));
-    __super::insert(text, pos);
-  }
-
-private:
-  void create() {
-    hmenu_ = ::CreatePopupMenu();
-    MENUINFO mi;
-    memset(&mi, 0, sizeof(mi));
-    mi.cbSize = sizeof(mi);
-    BOOL bresult = ::GetMenuInfo(hmenu_, &mi);
-    if (bresult != FALSE) {
-
-    }
   }
 
 private:
@@ -208,6 +203,20 @@ private:
   void create() {
     // 创建根菜单
     hmenu_ = ::CreateMenu();
+
+    // 由于子菜单需要使用 handler，需要让系统处理 WM_MENUCOMMAND 消息，而不是 WM_COMMAND 消息，
+    // 这样可以拿到点击的菜单句柄。
+    MENUINFO mi;
+    memset(&mi, 0, sizeof(mi));
+    mi.cbSize = sizeof(mi);
+    mi.fMask = MIM_STYLE;
+    BOOL bresult = ::GetMenuInfo(hmenu_, &mi);
+    if (bresult) {
+      mi.fMask = MIM_STYLE;
+      mi.dwStyle |= MNS_NOTIFYBYPOS;
+      bresult = ::SetMenuInfo(hmenu_, &mi);
+    }
+
   }
 };
 
@@ -298,8 +307,8 @@ public:
     ::InvalidateRect(hwnd_, NULL, TRUE);
   }
 
-  void set_hmenu(menu_handle& menu) {
-    BOOL bresult = ::SetMenu(hwnd_, menu.detach());
+  void set_hmenu(const menu_handle& menu) {
+    BOOL bresult = ::SetMenu(hwnd_, menu.hmenu());
     CALF_WIN32_API_CHECK(bresult != FALSE, SetMenu);
   }
 
@@ -394,7 +403,8 @@ protected:
   HWND hwnd_;
 };
 
-// 窗口类
+// 窗口类，相当于窗口模板，便于创建大量同类型窗口。
+// 负责处理窗口过程，进行窗口事件分发。
 // ref: https://docs.microsoft.com/en-us/windows/win32/winmsg/about-window-classes
 class window_class {
 public:
@@ -463,22 +473,27 @@ public:
 private:
   static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) {
     window_message_handler* handler = nullptr;
+
     if (msg == WM_NCCREATE) { // 这里的 NC 原来是 No-Client 的意思 (=.=!)。
       CREATESTRUCTW* cs = reinterpret_cast<CREATESTRUCTW*>(lparam);
       if (cs != nullptr) {
         handler = reinterpret_cast<window_message_handler*>(cs->lpCreateParams);
         ::SetWindowLongPtrW(hwnd, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(handler)); // 关联消息处理函数。
       }
-    } else {
-      handler = reinterpret_cast<window_message_handler*>(::GetWindowLongPtrW(hwnd, GWLP_USERDATA));
-    }
-
-    // 处理窗口菜单事件
-    if (msg == WM_COMMAND) {
-      if (HIWORD(wparam) == 0) {  // 0 为 menu
-        MENUITEMINFOW mii;
-        memset(&mii, 0, sizeof(mii));
+    } else if (msg == WM_MENUCOMMAND) {
+      // 处理窗口菜单事件交给菜单对象
+      HMENU hmenu = reinterpret_cast<HMENU>(lparam);
+      if (hmenu != NULL) {
+        MENUINFO mi;
+        memset(&mi, 0, sizeof(mi));
+        mi.cbSize = sizeof(mi);
+        mi.fMask = MIM_MENUDATA;
+        BOOL bresult = ::GetMenuInfo(hmenu, &mi);
+        handler = reinterpret_cast<window_message_handler*>(mi.dwMenuData);
       }
+    } else {
+      // 其他窗口事件交给窗口
+      handler = reinterpret_cast<window_message_handler*>(::GetWindowLongPtrW(hwnd, GWLP_USERDATA));
     }
 
     if (handler != nullptr) {
@@ -520,6 +535,7 @@ public:
       const window_handle& parent, 
       const WCHAR* title, 
       const window_class& wc,
+      const menu_handle& root_menu,
       window_message_handler* handler) {
     create_window(
         rc, 
@@ -528,7 +544,7 @@ public:
         L"", 
         WindowTraits::style(), 
         WindowTraits::ex_style(),
-        NULL, 
+        root_menu.hmenu(), 
         reinterpret_cast<void*>(handler));
   }
 
@@ -571,6 +587,7 @@ using message_window = basic_window<message_window_traits>;
 static const window_handle message_window_handle(HWND_MESSAGE);
 // 系统桌面窗口。
 static const window_handle desktop_window_handle(HWND_DESKTOP);
+
 class desktop_window : public window_handle {
 public:
   desktop_window() : window_handle(::GetDesktopWindow()) {}
@@ -659,14 +676,17 @@ public:
   using window_handler_map = std::map<std::string, window_handler_list>;
 
 public:
-  window(const ui_rect& rc = default_rect, const window_handle& parent = desktop_window_handle) {
+  window(
+      const ui_rect& rc = default_rect, 
+      const window_handle& parent = desktop_window_handle,
+      const menu_handle& root_menu = menu_handle()) {
     static application_window_class window_class_;
     static std::once_flag class_init_flag_;
 
     std::call_once(class_init_flag_, [this]() {
       window_class_.register_class(L"CalfWindowClass");
     });
-    overlapped_window::create(rc, parent, L"", window_class_, this);
+    overlapped_window::create(rc, parent, L"", window_class_, root_menu, this);
   }
 
   void listen(const std::string& name, const window_handler& handler) {
